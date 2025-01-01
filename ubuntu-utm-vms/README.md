@@ -3,9 +3,9 @@ The purpose of the repo is to provide some simple scripts that together install 
 This is intended to illustrate the entire process so it can be understood, then adapted to your on-prem environment and improved and extended with your chosen distributed applications.
 The directory structure is intended to be mounted by all VMs.
 A mount script is provided that can be pasted into a native ssh terminal (not a UTM display window).  
-Regarding Ephemeral and Generated files:
+**Regarding Ephemeral and Generated files:**
 * Package keys are occasionally updated so they may be included in this repo, but should be updated manually before starting this process.    
-* The master node may write files to guest/generated folder, which is not committed to this repo.  
+* The master node writes files to guest/generated folder, which is not committed to this repo.  
 * Worker nodes will customize their own join-config and CNI CIDR, which is written to their own  internal HOME directory.
  
 # Overview:
@@ -42,9 +42,11 @@ And each node's CNI must contain a pod CIDR range of 10.85.X.0/24 (where X is co
 On each node, add routes to every other node
 
 # Prep Host:
+`
 git clone git@github.com:cfedersp/stepwise-k8s.git  
 cd ubuntu-utm-vms  
 ./host-prep/download-keys.sh  
+`
 
 # Setup Base VM:
 Download ARM Image:  
@@ -60,15 +62,16 @@ Remove the USB drive
 Start the VM, noting the IP Address printed after login
 Delete the contents of /etc/machine-id but dont delete the file.  
 On your host, copy the mount script:
-cat vm-prep/pbcopy.txt | pbcopy
+`cat vm-prep/pbcopy.txt | pbcopy`
 ssh to the ip of your VM  using your favorite terminal.  
 Clear the contents of etc/machine-id but keep the file
 paste into your new terminal
-
+`
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
-Clear the contents of etc/machine-id but keep the file
+`
+Clear the contents of etc/machine-id **but keep the file**
 VM will shutdown.
 Stop using the VM display other than getting the ip.
 
@@ -78,14 +81,24 @@ Clone your base VM, give it a random mac, add 100G NVMe and a new name.
 Wait a couple minutes for UTM to finish copying.  
 Start the VM.  
 Change hostname:  
+`
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master  
+`
+
+Configure CNI:
+`
 sudo mkdir -p /etc/cni/net.d  
 sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist  
+`
+
+Share join-config and kubeconfig with host:
+`
 sudo /usr/share/host/guest/master/start-master.sh  
 sudo /usr/share/host/guest/master/install-config.sh  
 sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
 sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
 /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
+`
 
 # Setup Workers:
 Clone your base VM, give it a random mac, add 100G NVMe and a new name.  
