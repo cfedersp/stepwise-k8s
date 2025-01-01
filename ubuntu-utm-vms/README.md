@@ -1,6 +1,12 @@
+# Purpose:
+The purpose of the repo is to provide some simple scripts that together install kubernetes on a set of VMs.
+The directory structure is intended to be mounted by all VMs.
+A mount script is provided that can be pasted into a native ssh terminal (not a UTM display window).  
+Package keys may be included in this repo, but should be updated manually before starting this process, since they are occasionally updated.  
+The master node may write files to guest/generated folder, which is not committed to this repo.  
 # Overview:
-Prep host:  
-Clone repo  
+## Prep host:  
+Clone this repo  
 Download latest crio and kubernetes package keys
 
 ## Setup base VM:
@@ -31,6 +37,11 @@ Given each VM has IP 192.168.64.X (where X is random)
 And each node's CNI config 10.85.X.0/24 (where X is consecutive)  
 On each node, add routes to each node  
 
+# Prep Host:
+git clone git@github.com:cfedersp/stepwise-k8s.git  
+cd ubuntu-utm-vms  
+./host-prep/download-keys.sh  
+
 # Setup Base VM:
 Download ARM Image:  
 [Ubuntu Server ISO Download](https://ubuntu.com/download/server/arm)  
@@ -59,41 +70,41 @@ Stop using the VM display other than getting the ip.
 
 
 # Setup Master
-Clone your base VM, give it a random mac, add 100G NVMe and a new name.
-Wait a couple minutes for UTM to finish copying.
-Start the VM.
-Change hostname:
-sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master
-sudo mkdir -p /etc/cni/net.d
-sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist
-sudo /usr/share/host/guest/master/start-master.sh
-sudo /usr/share/host/guest/master/install-config.sh
-sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)
-sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
-/usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated
+Clone your base VM, give it a random mac, add 100G NVMe and a new name.  
+Wait a couple minutes for UTM to finish copying.  
+Start the VM.  
+Change hostname:  
+sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master  
+sudo mkdir -p /etc/cni/net.d  
+sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist  
+sudo /usr/share/host/guest/master/start-master.sh  
+sudo /usr/share/host/guest/master/install-config.sh  
+sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
+sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
+/usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
 
 # Setup Workers:
-Clone your base VM, give it a random mac, add 100G NVMe and a new name.
-Wait a couple minutes for UTM to finish copying.
-Network: "Random"
-Disk: Add NVMe 100G
-System: 1 core
-Name: Worker1
-Start the VM.
-Change hostname:
-sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1
+Clone your base VM, give it a random mac, add 100G NVMe and a new name.  
+Wait a couple minutes for UTM to finish copying.  
+Network: "Random"  
+Disk: Add NVMe 100G  
+System: 1 core  
+Name: Worker1  
+Start the VM.  
+Change hostname  :
+sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1  
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
 sudo mkdir -p /etc/cni/net.d
-sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/
+sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/  
 
-/usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-sudo kubeadm join --config ./join-config.json
-mkdir ~/.kube
-cp /usr/share/host/guest/generated/admin.conf ~/.kube/config
-kubectl get nodes
+/usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated  
+sudo kubeadm join --config ./join-config.json  
+mkdir ~/.kube  
+cp /usr/share/host/guest/generated/admin.conf ~/.kube/config  
+kubectl get nodes  
 
 # Setup Network Routes:
 Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs  
 python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep default | awk '{print $NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')  
 chmod 775 cni-routes.sh  
-sudo ./cni-routes.sh
+sudo ./cni-routes.sh  
