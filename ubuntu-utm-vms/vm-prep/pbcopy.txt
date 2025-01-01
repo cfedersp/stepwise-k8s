@@ -1,0 +1,10 @@
+cat <<EOF > mount-share.sh
+#!/bin/bash
+
+mkdir -p /usr/share/host/
+mount -t 9p -o trans=virtio share /usr/share/host -oversion=9p2000.L,access=any
+echo "share   /usr/share/host       9p      trans=virtio,version=9p2000.L,access=any      0      0" >> /etc/fstab
+EOF
+
+echo "Invoke the mount script:"
+echo "./mount-share $UID"

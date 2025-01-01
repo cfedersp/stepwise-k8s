@@ -1,0 +1,1 @@
+{"apiVersion":"kubeadm.k8s.io/v1beta3","kind":"JoinConfiguration","nodeRegistration":{"name":"master","criSocket":"unix:///var/run/crio/crio.sock"},"discovery":{"bootstrapToken":{"apiServerEndpoint":"192.168.64.7:6443","token":"cs1jr7.tq8zn9h258o6ex9v","caCertHashes":["sha256:c40f48545a2c3686141807a5fdbde3df6d96847040f2576330680e3d8dbf24f6"]}}}
