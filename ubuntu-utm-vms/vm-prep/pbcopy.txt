@@ -7,4 +7,5 @@ echo "share   /usr/share/host       9p      trans=virtio,version=9p2000.L,access
 EOF
 
 echo "Invoke the mount script:"
+echo "chmod 775 mount-share.sh"
 echo "./mount-share $UID"

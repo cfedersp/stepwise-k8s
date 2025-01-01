@@ -8,6 +8,7 @@ Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 Install OS  
 install crio and kubernetes package keys 
 Install kubernetes packages  
+Enable kernel parameters required by kubernetes.
 Change emulated network card  
 
 ## Setup Master
@@ -41,28 +42,28 @@ Follow OS installation steps, being sure to include:
 * No snaps are necessary
 Then stop the VM  
 Remove the USB drive  
-Start the VM note the IP Address  
+Start the VM, noting the IP Address printed after login
 Delete the contents of /etc/machine-id but dont delete the file.  
-ssh to that ip using your favorite terminal.  
-copy the mount script:
+On your host, copy the mount script:
 cat vm-prep/pbcopy.txt | pbcopy
+ssh to the ip of your VM  using your favorite terminal.  
+Clear the contents of etc/machine-id but keep the file
 paste into your new terminal
 
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
-sudo apt install jo jq yq
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
 Clear the contents of etc/machine-id but keep the file
-Shutdown the VM.
+VM will shutdown.
 Stop using the VM display other than getting the ip.
 
 
 # Setup Master
 Clone your base VM, give it a random mac, add 100G NVMe and a new name.
 Wait a couple minutes for UTM to finish copying.
+Start the VM.
 Change hostname:
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master
-reboot
 sudo mkdir -p /etc/cni/net.d
 sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist
 sudo /usr/share/host/guest/master/start-master.sh
@@ -72,11 +73,17 @@ sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
 /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated
 
 # Setup Workers:
+Clone your base VM, give it a random mac, add 100G NVMe and a new name.
+Wait a couple minutes for UTM to finish copying.
 Network: "Random"
 Disk: Add NVMe 100G
 System: 1 core
 Name: Worker1
+Start the VM.
+Change hostname:
+sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
+sudo mkdir -p /etc/cni/net.d
 sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/
 
 /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
@@ -86,5 +93,6 @@ cp /usr/share/host/guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 
 # Setup Network Routes:
+Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs
 python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')
 

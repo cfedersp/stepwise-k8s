@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e -x
 
-apt install net-tools parted lvm2 netcat-openbsd zip git apt-transport-https ca-certificates curl gnupg2 software-properties-common jo linux-modules-extra-$(uname -r) -y
+apt install net-tools parted lvm2 netcat-openbsd zip git apt-transport-https ca-certificates curl gnupg2 software-properties-common jo jq yq linux-modules-extra-$(uname -r) -y
 KUBERNETES_VERSION=1.28
 CRIO_VERSION=1.28.2
 
@@ -38,3 +38,4 @@ systemctl enable crio.service
 kubeadm config images pull
 
 printf "NODE_NAME=$(hostname)" > init.env
+shutdown
