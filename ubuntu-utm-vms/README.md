@@ -29,17 +29,19 @@ Given each VM has IP 192.168.64.X (where X is random)
 And each node's CNI config 10.85.X.0/24 (where X is consecutive)
 On each node, add routes to each node
 
-# Setup base VM:
+# Setup Base VM:
 Download ARM Image:
 https://ubuntu.com/download/server/arm
-If you have an ISO, in UTM, select Emulate, then browse to the ISO and select your machine settings.
-​Press play and wait for the countdown to install Ubuntu.
-Download the ISO installer of the OS you want run
-Start the VM, booting from the ISO, follow OS installation steps, stop the VM
-Remove the USB drive and start the VM, append the following your .bashrc:
-
-ip addr | grep "inet.*enp0s1" | tail -n1
-Reboot, Note the ip address
+If you have an ISO, in UTM, select Virtualize, then browse to the ISO and select your machine settings.
+Start the Created VM and Select "Install or Try Ubuntu" or wait for the countdown to install Ubuntu.
+Follow OS installation steps, being sure to include:
+* Install SSH Server
+* Import SSH key
+* No snaps are necessary
+Then stop the VM
+Remove the USB drive
+Start the VM note the IP Address
+Delete the contents of /etc/machine-id but dont delete the file.
 ssh to that ip using your favorite terminal.
 copy the mount script 
 
@@ -47,7 +49,7 @@ cat vm-prep/pbcopy.txt | pbcopy
 paste into your new terminal
 
 chmod 775 mount-share.sh
-​sudo ./mount-share.sh
+sudo ./mount-share.sh
 sudo apt install jo jq yq
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
 Clear the contents of etc/machine-id but keep the file
