@@ -15,11 +15,10 @@ Download latest crio and kubernetes package keys
 
 ## Setup base VM:
 Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
-Install OS  
-install crio and kubernetes package keys 
+Install OS from ISO  
+install crio and kubernetes package keys  
 Install kubernetes packages  
-Enable kernel parameters required by kubernetes.
-Change emulated network card  
+Enable kernel parameters required by kubernetes.  
 
 ## Setup Master
 Clone base VM  
@@ -49,9 +48,10 @@ cd ubuntu-utm-vms
 `
 
 # Setup Base VM:
-Download ARM Image:  
+Download ARM Image to your host:  
 [Ubuntu Server ISO Download](https://ubuntu.com/download/server/arm)  
 If you have an ISO, in UTM, select Virtualize, then browse to the ISO and select your machine settings.  
+Specify share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
 Start the Created VM and Select "Install or Try Ubuntu" or wait for the countdown to install Ubuntu.  
 Follow OS installation steps, being sure to include:
 * Install SSH Server
