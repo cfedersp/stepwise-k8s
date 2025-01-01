@@ -93,6 +93,7 @@ cp /usr/share/host/guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 
 # Setup Network Routes:
-Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs
-python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')
-
+Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs  
+python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep default | awk '{print $NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')  
+chmod 775 cni-routes.sh  
+sudo ./cni-routes.sh

@@ -43,7 +43,7 @@ host_ip = get_interface_ip(args.clusterInterface)
 print("Host IP: ",host_ip);
 
 with open(args.cniInterface + "-routes.sh", "w") as f:
-  f.write("#!/bin/bash -e -x\n\n")
+  f.write("#!/bin/bash -ex\n\n")
 
   for nodeIndex, nodeIp in enumerate(args.nodeIps):
     print(nodeIp);
