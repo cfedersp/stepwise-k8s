@@ -41,11 +41,11 @@ And each node's CNI must contain a pod CIDR range of 10.85.X.0/24 (where X is co
 On each node, add routes to every other node
 
 # Prep Host:
-`
+```
 git clone git@github.com:cfedersp/stepwise-k8s.git  
 cd ubuntu-utm-vms  
 ./host-prep/download-keys.sh  
-`
+```
 
 # Setup Base VM:
 Download ARM Image to your host:  
@@ -66,11 +66,11 @@ On your host, copy the mount script:
 ssh to the ip of your VM  using your favorite terminal.  
 Clear the contents of etc/machine-id but keep the file
 paste into your new terminal
-`
+```
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
-`
+```
 Clear the contents of etc/machine-id **but keep the file**
 VM will shutdown.
 Stop using the VM display other than getting the ip.
@@ -81,24 +81,24 @@ Clone your base VM, give it a random mac, add 100G NVMe and a new name.
 Wait a couple minutes for UTM to finish copying.  
 Start the VM.  
 Change hostname:  
-`
+```
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master  
-`
+```
 
 Configure CNI:
-`
+```
 sudo mkdir -p /etc/cni/net.d  
 sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist  
-`
+```
 
 Share join-config and kubeconfig with host:
-`
+```
 sudo /usr/share/host/guest/master/start-master.sh  
 sudo /usr/share/host/guest/master/install-config.sh  
 sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
 sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
 /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
-`
+```
 
 # Setup Workers:
 Clone your base VM, give it a random mac, add 100G NVMe and a new name.  
@@ -109,19 +109,28 @@ System: 1 core
 Name: Worker1  
 Start the VM.  
 Change hostname  :
+```
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1  
+```
+Configure CNI:
+```
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
 sudo mkdir -p /etc/cni/net.d
 sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/  
-
+```
+Join the Kubernetes Cluster, make the admin keys available for CLI use, show cluster nodes.
+```
 /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated  
 sudo kubeadm join --config ./join-config.json  
 mkdir ~/.kube  
 cp /usr/share/host/guest/generated/admin.conf ~/.kube/config  
 kubectl get nodes  
+```
 
 # Setup Network Routes:
 Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs  
-python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep default | awk '{print $NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')  
-chmod 775 cni-routes.sh  
-sudo ./cni-routes.sh  
+```
+python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep default | awk '{print $NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')
+chmod 775 cni-routes.sh
+sudo ./cni-routes.sh
+```
