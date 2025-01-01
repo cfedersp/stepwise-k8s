@@ -1,9 +1,13 @@
 # Purpose:
 The purpose of the repo is to provide some simple scripts that together install kubernetes on a set of VMs.
+This is intended to illustrate the entire process so it can be understood, then adapted to your on-prem environment and improved and extended with your chosen distributed applications.
 The directory structure is intended to be mounted by all VMs.
 A mount script is provided that can be pasted into a native ssh terminal (not a UTM display window).  
-Package keys may be included in this repo, but should be updated manually before starting this process, since they are occasionally updated.  
-The master node may write files to guest/generated folder, which is not committed to this repo.  
+Regarding Ephemeral and Generated files:
+* Package keys are occasionally updated so they may be included in this repo, but should be updated manually before starting this process.    
+* The master node may write files to guest/generated folder, which is not committed to this repo.  
+* Worker nodes will customize their own join-config and CNI CIDR, which is written to their own  internal HOME directory.
+ 
 # Overview:
 ## Prep host:  
 Clone this repo  
@@ -34,8 +38,8 @@ copy the admin.conf to $HOME/.kube/config, the location expected by kubectl
 
 ## Setup Network Routes:
 Given each VM has IP 192.168.64.X (where X is random)  
-And each node's CNI config 10.85.X.0/24 (where X is consecutive)  
-On each node, add routes to each node  
+And each node's CNI must contain a pod CIDR range of 10.85.X.0/24 (where X is consecutive)  
+On each node, add routes to every other node
 
 # Prep Host:
 git clone git@github.com:cfedersp/stepwise-k8s.git  
