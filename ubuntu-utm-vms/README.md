@@ -1,14 +1,17 @@
 # Purpose:
-The purpose of the repo is to provide some simple scripts that together install kubernetes on a set of VMs.
+The purpose of the repo is to provide some simple scripts that install kubernetes on a set of VMs.
 This is intended to illustrate the entire process so it can be understood, then adapted to your on-prem environment and improved and extended with your chosen distributed applications.
 The directory structure is intended to be mounted by all VMs.
 A mount script is provided that can be pasted into a native ssh terminal (not a UTM display window).  
 **Regarding Ephemeral and Generated files:**
-* Package keys are occasionally updated so they may be included in this repo, but should be updated manually before starting this process.    
-* The master node writes files to guest/generated folder, which is not committed to this repo.  
-* Worker nodes will customize their own join-config and CNI CIDR, which is written to their own  internal HOME directory.
+* Package keys are occasionally updated so they may be included in this repo, but you will update them manually at the start of this process.    
+* The master node writes join-config and private keys to guest/generated folder, which is not committed to this repo.  
+* Worker nodes will customize the join-config and CNI CIDR, writing only to their own internal HOME directory.
+
+# Tested on:
+UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
  
-# Overview:
+# Process Overview:
 ## Prep host:  
 Clone this repo  
 Download latest crio and kubernetes package keys
@@ -18,7 +21,7 @@ Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 Install OS from ISO  
 install crio and kubernetes package keys  
 Install kubernetes packages  
-Enable kernel parameters required by kubernetes.  
+Enable and disable kernel parameters as required by kubernetes.  
 
 ## Setup Master
 Clone base VM  
@@ -56,16 +59,16 @@ Start the Created VM and Select "Install or Try Ubuntu" or wait for the countdow
 Follow OS installation steps, being sure to include:
 * Install SSH Server
 * Import SSH key
-* No snaps are necessary
+* No snaps are necessary  
 Then stop the VM  
-Remove the USB drive  
+Delete the USB drive so the bootloader will not stop for a prompt.  
 Start the VM, noting the IP Address printed after login
 Delete the contents of /etc/machine-id but dont delete the file.  
 On your host, copy the mount script:
 `cat vm-prep/pbcopy.txt | pbcopy`
 ssh to the ip of your VM  using your favorite terminal.  
-Clear the contents of etc/machine-id but keep the file
-paste into your new terminal
+Clear the contents of etc/machine-id but keep the file  
+paste into your new terminal  
 ```
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
