@@ -16,9 +16,11 @@ UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
 Clone this repo  
 Download latest crio and kubernetes package keys
 
-## Setup base VM:
+## Setup base linux VM:
 Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
-Install OS from ISO  
+Install OS from ISO 
+
+## Create base kubernetes VM: 
 install crio and kubernetes package keys  
 Install kubernetes packages  
 Enable and disable kernel parameters as required by kubernetes.  
@@ -50,7 +52,7 @@ cd ubuntu-utm-vms
 ./host-prep/download-keys.sh  
 ```
 
-# Setup Base VM:
+# Create a base linux VM:
 Download ARM Image to your host:  
 [Ubuntu Server ISO Download](https://ubuntu.com/download/server/arm)  
 If you have an ISO, in UTM, select Virtualize, then browse to the ISO and select your machine settings.  
@@ -60,10 +62,15 @@ Follow OS installation steps, being sure to include:
 * Install SSH Server
 * Import SSH key
 * No snaps are necessary  
+
 Then stop the VM  
 Delete the USB drive so the bootloader will not stop for a prompt.  
 Start the VM, noting the IP Address printed after login
 Delete the contents of /etc/machine-id but dont delete the file.  
+
+Stop using the VM display other than getting the ip.
+
+# Create a base kubernetes VM:
 On your host, copy the mount script:
 `cat vm-prep/pbcopy.txt | pbcopy`
 ssh to the ip of your VM  using your favorite terminal.  
@@ -75,9 +82,7 @@ sudo ./mount-share.sh
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
 ```
 Clear the contents of etc/machine-id **but keep the file**
-VM will shutdown.
-Stop using the VM display other than getting the ip.
-
+Shutdown the VM.
 
 # Setup Master
 Clone your base VM, give it a random mac, add 100G NVMe and a new name.  

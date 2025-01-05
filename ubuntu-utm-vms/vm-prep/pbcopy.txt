@@ -8,4 +8,4 @@ EOF
 
 echo "Invoke the mount script:"
 echo "chmod 775 mount-share.sh"
-echo "./mount-share $UID"
+echo "sudo ./mount-share.sh"

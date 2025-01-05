@@ -38,4 +38,3 @@ systemctl enable crio.service
 kubeadm config images pull
 
 printf "NODE_NAME=$(hostname)" > init.env
-shutdown
