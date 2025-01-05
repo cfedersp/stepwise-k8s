@@ -1,18 +1,22 @@
 # Purpose:
-The purpose of the repo is to provide some simple scripts that install kubernetes on a set of VMs.
-This is intended to illustrate the entire process so it can be understood, then adapted to your on-prem environment and improved and extended with your chosen distributed applications.
-The directory structure is intended to be mounted by all VMs.
+The purpose of the repo is to provide some simple scripts that install kubernetes on a set of VMs on your VM manager's default Bridged Network.
+This is intended to illustrate the entire process so it can be understood, then adapted to your ops environment and improved and extended with your chosen distributed applications.
+This repo's directory structure is intended to be mounted by all VMs.
 A mount script is provided that can be pasted into a native ssh terminal (not a UTM display window).  
 **Regarding Ephemeral and Generated files:**
 * Package keys are occasionally updated so they may be included in this repo, but you will update them manually at the start of this process.    
 * The master node writes join-config and private keys to guest/generated folder, which is not committed to this repo.  
 * Worker nodes will customize the join-config and CNI CIDR, writing only to their own internal HOME directory.
+Once your cluster is running, you will access it from the host and we can add applications like MinIO(an Object Store)
+Finally, we explore sophistications such as running on a separate private network or adding an ingress controller (may require components internal and external to your cluster).
 
 # Tested on:
 UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
  
 # Process Overview:
 ## Prep host:  
+Create ~/.kube/ dir for CLI keys
+Install helm and kubectl so we can interact with the cluster once its running.
 Clone this repo  
 Download latest crio and kubernetes package keys
 
@@ -36,6 +40,7 @@ upload admin.conf to host for use by workers
 ## Setup Workers:
 Copy base VM  
 rename host, if necessary  
+Make the extra disk available as part of a Volume Group
 customize the CNI bridge CIDR block and install it  
 run scripts under guest/workers to customize the k8s join config and join the cluster.  
 copy the admin.conf to $HOME/.kube/config, the location expected by kubectl  
@@ -45,8 +50,20 @@ Given each VM has IP 192.168.64.X (where X is random)
 And each node's CNI must contain a pod CIDR range of 10.85.X.0/24 (where X is consecutive)  
 On each node, add routes to every other node
 
+## Start using it:
+Copy the keys required for the CLI to the preferred location
+Run some test commands 
+Install cool things.
+
 # Prep Host:
 ```
+mkdir -p ~/.kube/
+export HELM_INSTALL_DIR=$HOME/opt/utils
+mkdir -p $HELM_INSTALL_DIR
+export PATH=$HELM_INSTALL_DIR:$PATH
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+curl -L -o $HOME/opt/utils/kubectl "https://dl.k8s.io/release/v1.32.0/bin/darwin/arm64/kubectl"
+chmod 755 $HOME/opt/utils/kubectl
 git clone git@github.com:cfedersp/stepwise-k8s.git  
 cd ubuntu-utm-vms  
 ./host-prep/download-keys.sh  
@@ -62,6 +79,7 @@ Follow OS installation steps, being sure to include:
 * Install SSH Server
 * Import SSH key
 * No snaps are necessary  
+* Dont install a firewall for now
 
 Then stop the VM  
 Delete the USB drive so the bootloader will not stop for a prompt.  
@@ -92,7 +110,10 @@ Change hostname:
 ```
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master  
 ```
-
+Create Volume Group for application data:
+```
+sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
+```
 Configure CNI:
 ```
 sudo mkdir -p /etc/cni/net.d  
@@ -120,6 +141,10 @@ Change hostname  :
 ```
 sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1  
 ```
+Create Volume Group for application data:
+```
+sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
+```
 Configure CNI:
 ```
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
@@ -142,3 +167,11 @@ python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep defa
 chmod 775 cni-routes.sh
 sudo ./cni-routes.sh
 ```
+
+# Start using it:
+Copy the keys required by CLI to the preferred location:
+From $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
+```
+cp guest/generated/admin.conf ~/.kube/config
+```
+
