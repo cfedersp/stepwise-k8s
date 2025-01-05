@@ -1,0 +1,5 @@
+mayastor:
+  loki-stack:
+    loki:
+      persistence:
+        size: 2Gi

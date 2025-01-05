@@ -15,10 +15,10 @@ UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
  
 # Process Overview:
 ## Prep host:  
-Create ~/.kube/ dir for CLI keys
-Install helm and kubectl so we can interact with the cluster once its running.
+Create ~/.kube/ dir for CLI keys  
+Install helm and kubectl so we can interact with the cluster once its running.  
 Clone this repo  
-Download latest crio and kubernetes package keys
+Download latest crio and kubernetes package keys  
 
 ## Setup base linux VM:
 Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
@@ -168,10 +168,19 @@ chmod 775 cni-routes.sh
 sudo ./cni-routes.sh
 ```
 
-# Start using it:
-Copy the keys required by CLI to the preferred location:
-From $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
+# Verify cluster access:
+Copy the keys required by CLI to the preferred location:  
+From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
 ```
 cp guest/generated/admin.conf ~/.kube/config
+kubectl get nodes
 ```
-
+# Customize the cluster by installing a Storage Controller  
+Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
+Install the chart, but give values so loki doesn't use such a large disk.  
+Check its components start successfully  
+```
+kubectl apply -f guest/manifests/static/lvm-sc.yaml 
+helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-values.yaml
+kubectl get pods -n openebs
+```
