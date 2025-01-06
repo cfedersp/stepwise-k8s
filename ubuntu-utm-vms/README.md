@@ -55,6 +55,10 @@ Copy the keys required for the CLI to the preferred location
 Run some test commands 
 Install cool things.
 
+## References:
+https://min.io/docs/minio/kubernetes/upstream/operations/install-deploy-manage/deploy-minio-tenant-helm.html#deploy-tenant-helm
+This was customized and checked in as a static manifest.
+curl -sLo values.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml
 # Prep Host:
 ```
 mkdir -p ~/.kube/
@@ -175,7 +179,7 @@ From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 cp guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 ```
-# Customize the cluster by installing a Storage Controller  
+# Customize the cluster by installing a Storage Controller and Object Store
 Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
 Install the chart, but give values so loki doesn't use such a large disk.  
 Check its components start successfully  
@@ -183,4 +187,8 @@ Check its components start successfully
 kubectl apply -f guest/manifests/static/lvm-sc.yaml 
 helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-disable-mayastor.yaml
 kubectl get pods -n openebs
+helm install --namespace minio-operator --create-namespace operator minio-operator/operator
+kubectl get all -n minio-operator
+helm install --namespace ledgerbadger --create-namespace --values guest/manifests/static/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
+
 ```
