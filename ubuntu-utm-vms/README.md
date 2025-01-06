@@ -181,6 +181,6 @@ Install the chart, but give values so loki doesn't use such a large disk.
 Check its components start successfully  
 ```
 kubectl apply -f guest/manifests/static/lvm-sc.yaml 
-helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-values.yaml
+helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-disable-mayastor.yaml
 kubectl get pods -n openebs
 ```
