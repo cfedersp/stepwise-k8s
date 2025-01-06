@@ -6,8 +6,8 @@ A mount script is provided that can be pasted into a native ssh terminal (not a 
 **Regarding Ephemeral and Generated files:**
 * Package keys are occasionally updated so they may be included in this repo, but you will update them manually at the start of this process.    
 * The master node writes join-config and private keys to guest/generated folder, which is not committed to this repo.  
-* Worker nodes will customize the join-config and CNI CIDR, writing only to their own internal HOME directory.
-Once your cluster is running, you will access it from the host and we can add applications like MinIO(an Object Store)
+* Worker nodes will customize the join-config and CNI CIDR, writing only to their own internal HOME directory.  
+Once your cluster is running, you will access it from the host and we can add applications like MinIO(an Object Store)  
 Finally, we explore sophistications such as running on a separate private network or adding an ingress controller (may require components internal and external to your cluster).
 
 # Tested on:
@@ -179,7 +179,7 @@ From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 cp guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 ```
-# Customize the cluster by installing a Storage Controller and Object Store
+# Instal a Storage Controller and Object Store
 Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
 Install the chart, but give values so loki doesn't use such a large disk.  
 Check its components start successfully  
