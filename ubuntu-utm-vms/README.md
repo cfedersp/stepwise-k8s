@@ -197,7 +197,7 @@ kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 ```
 
 
-# Intall an Object Store
+# Install an Object Store
 Need kafka env vars
 ```
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
@@ -205,3 +205,23 @@ kubectl get all -n minio-operator
 helm install --namespace ledgerbadger --create-namespace --values guest/manifests/static/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
 
 ```
+
+# Cluster Validation
+Install a MinIO Client
+
+kubectl run minio-client --image=bitnami/minio-client --restart=Never
+
+
+Publish + Consume Kafka msgs
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /home/kafka/bin/kafka-console-producer.sh --topic DEMO 
+
+./bin/kafka-topics.sh --create --topic DEMO --bootstrap-server localhost:9092
+./bin/kafka-console-producer.sh --topic DEMO --bootstrap-server localhost:9092
+./bin/kafka-console-consumer.sh --topic DEMO --bootstrap-server localhost:9092 --from-beginning
+
+
+..or..
+
+kubectl run kafka-producer -it --image=bitnami/kafka --restart=Never -- kafka-console-producer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO
+
+kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
