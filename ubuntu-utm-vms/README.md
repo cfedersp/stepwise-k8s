@@ -180,7 +180,7 @@ From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 cp guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 ```
-# Install a Storage Controller and Object Store
+# Install a Storage Controller
 Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
 Install the chart, but give values so loki doesn't use such a large disk.  
 Check its components start successfully  
@@ -188,6 +188,18 @@ Check its components start successfully
 kubectl apply -f guest/manifests/static/lvm-sc.yaml 
 helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-disable-mayastor.yaml
 kubectl get pods -n openebs
+```
+
+# Install Kafka
+Not clear how to use KRaft NodePools with our storage configuration - set default sc? Use ZK for now.
+```
+kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
+```
+
+
+# Intall an Object Store
+Need kafka env vars
+```
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
 kubectl get all -n minio-operator
 helm install --namespace ledgerbadger --create-namespace --values guest/manifests/static/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
