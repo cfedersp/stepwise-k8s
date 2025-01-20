@@ -113,7 +113,7 @@ Wait a couple minutes for UTM to finish copying.
 Start the VM.  
 Change hostname:  
 ```
-sudo /usr/share/host/vm-prep/set-hostname-reboot.sh master  
+sudo /usr/share/host/vm-prep/set-hostname-clear-mid-reboot.sh master  
 ```
 Create Volume Group for application data:
 ```
