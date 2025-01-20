@@ -200,9 +200,11 @@ kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 # Install an Object Store
 Need kafka env vars
 ```
+helm repo add minio-operator https://operator.min.io
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
 kubectl get all -n minio-operator
-helm install --namespace ledgerbadger --create-namespace --values guest/manifests/static/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
+kubectl create secret generic minio-env --from-literal=config.env=MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY and MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY
+helm install --namespace ledgerbadger --create-namespace --values guest/helm-values/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
 
 ```
 
