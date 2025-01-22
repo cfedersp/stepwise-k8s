@@ -198,14 +198,29 @@ kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 
 
 # Install an Object Store
-Need kafka env vars
+We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
+Future task: setup external identity provider so we dont have to handle user credentials here.
+The secret must contain key 'config.env', containing export or set commands.
 ```
 helm repo add minio-operator https://operator.min.io
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
 kubectl get all -n minio-operator
-kubectl create secret generic minio-env --from-literal=config.env=MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY and MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY
-helm install --namespace ledgerbadger --create-namespace --values guest/helm-values/minio-tenant-values.yaml ledgerbadger minio-operator/tenant
+kubectl create ns ledgerbadger-prod
+MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"')
+kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
+helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
+
+```
+
+# Inspect and Delete
+In case you want to start over
+```
+kubectl get pods -n ledgerbadger-prod
+helm list -n ledgerbadger-prod
+kubectl get tenant -n ledgerbadger-prod
+helm uninstall -n ledgerbadger-prod ledgerbadger-prod
+kubectl get pods -n ledgerbadger-prod
 ```
 
 # Cluster Validation
