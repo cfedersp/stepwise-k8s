@@ -196,40 +196,8 @@ Not clear how to use KRaft NodePools with our storage configuration - set defaul
 kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 ```
 
-
-# Install an Object Store
-We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
-Future task: setup external identity provider so we dont have to handle user credentials here.
-The secret must contain key 'config.env', containing export or set commands.
-```
-helm repo add minio-operator https://operator.min.io
-helm install --namespace minio-operator --create-namespace operator minio-operator/operator
-kubectl get all -n minio-operator
-kubectl create ns ledgerbadger-prod
-MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"')
-kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
-
-helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
-
-```
-
-# Inspect and Delete
-In case you want to start over
-```
-kubectl get pods -n ledgerbadger-prod
-helm list -n ledgerbadger-prod
-kubectl get tenant -n ledgerbadger-prod
-helm uninstall -n ledgerbadger-prod ledgerbadger-prod
-kubectl get pods -n ledgerbadger-prod
-```
-
-# Cluster Validation
-Install a MinIO Client
-
-kubectl run minio-client --image=bitnami/minio-client --restart=Never
-
-
-Publish + Consume Kafka msgs
+# Validate Kafka
+Publish + Consume msgs
 kubectl exec -it my-cluster-kafka-0 -n kafka -- /home/kafka/bin/kafka-console-producer.sh --topic DEMO 
 
 ./bin/kafka-topics.sh --create --topic DEMO --bootstrap-server localhost:9092
@@ -242,3 +210,68 @@ kubectl exec -it my-cluster-kafka-0 -n kafka -- /home/kafka/bin/kafka-console-pr
 kubectl run kafka-producer -it --image=bitnami/kafka --restart=Never -- kafka-console-producer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO
 
 kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
+
+# Install an Object Store
+We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
+Future task: setup external identity provider so we dont have to handle user credentials here.
+The secret must contain key 'config.env', containing export or set commands.
+
+
+```
+helm repo add minio-operator https://operator.min.io
+helm install --namespace minio-operator --create-namespace operator minio-operator/operator
+kubectl get all -n minio-operator
+kubectl create ns ledgerbadger-prod
+MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"')
+kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
+
+helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
+
+```
+
+# Upgrade the Object Store Configuration ???
+Make changes to tenant config without deleting and re-creating it
+
+# Inspect and Delete
+In case you want to start over
+```
+kubectl get pods -n ledgerbadger-prod
+helm list -n ledgerbadger-prod
+kubectl get tenant -n ledgerbadger-prod
+helm uninstall -n ledgerbadger-prod ledgerbadger-prod
+kubectl get pods -n ledgerbadger-prod
+```
+
+# MinIO Validation
+-- Install a MinIO Client: kubectl run minio-client --image=bitnami/minio-client --restart=Never
+
+## Show Server Configuration
+
+mc alias set myminio https://minio.ledgerbadger-prod.svc.cluster.local/  minio minio123
+mc admin info --json myminio
+
+## Basic Bucket Operations
+Bucket names are always lower case
+
+mc config host add myminio https://minio.ledgerbadger-prod.svc.cluster.local/  minio minio123
+mc mb --with-lock myminio/charliedemo
+mc ls myminio
+
+Now subscribe to Bucket Notifications:
+Kafka topic names are grouped within a set of multiple configuration properties. 
+When subscribing to events, we dont specify the kafka topic, we specify the configuration set *identifier* within an ARN.
+
+Reference:
+https://min.io/docs/minio/linux/administration/monitoring/publish-events-to-kafka.html
+
+mc admin info --json myminio
+if your Kafka broken env var is suffixed with _PRIMARY, your SQS endpoint is arn:minio:sqs::PRIMARY:kafka
+
+mc admin config get myminio notify_kafka
+mc admin config set myminio/ notify_kafka:PRIMARY tls_skip_verify="on" 
+mc admin service restart myminio/
+mc event add myminio/charliedemo arn:minio:sqs::PRIMARY:kafka 
+mc event list myminio/charliedemo
+
+-p --event post,put,delete
+s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
