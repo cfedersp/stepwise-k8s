@@ -198,7 +198,12 @@ kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 
 # Validate Kafka
 Publish + Consume msgs
-kubectl exec -it my-cluster-kafka-0 -n kafka -- /home/kafka/bin/kafka-console-producer.sh --topic DEMO 
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /opt/kafka/bin/kafka-console-producer.sh --topic DEMO 
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /opt/kafka/bin/kafka-console-consumer.sh --topic MINIO-BUCKET-NOTIFICATIONS --bootstrap-server localhost:9092 --from-beginning
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /opt/kafka/bin/kafka-console-consumer.sh --topic MINIO-BUCKET-NOTIFICATIONS --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+
+
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /bin/bash
 
 ./bin/kafka-topics.sh --create --topic DEMO --bootstrap-server localhost:9092
 ./bin/kafka-console-producer.sh --topic DEMO --bootstrap-server localhost:9092
@@ -207,9 +212,10 @@ kubectl exec -it my-cluster-kafka-0 -n kafka -- /home/kafka/bin/kafka-console-pr
 
 ..or..
 
-kubectl run kafka-producer -it --image=bitnami/kafka --restart=Never -- kafka-console-producer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO
+-- DOESN'T WORK
+-- kubectl run kafka-producer -it --image=bitnami/kafka --restart=Never -- kafka-console-producer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO
 
-kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
+-- kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
 
 # Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
@@ -264,6 +270,9 @@ When subscribing to events, we dont specify the kafka topic, we specify the conf
 Reference:
 https://min.io/docs/minio/linux/administration/monitoring/publish-events-to-kafka.html
 
+First make some test data available to your client
+-- minio pods dont have tar
+-- kubectl cp --disable-compression ~/Downloads/blue-tunnel.jpg ledgerbadger-prod/myminio-pool-0-0:/data -c minio 
 mc admin info --json myminio
 if your Kafka broken env var is suffixed with _PRIMARY, your SQS endpoint is arn:minio:sqs::PRIMARY:kafka
 
@@ -272,6 +281,68 @@ mc admin config set myminio/ notify_kafka:PRIMARY tls_skip_verify="on"
 mc admin service restart myminio/
 mc event add myminio/charliedemo arn:minio:sqs::PRIMARY:kafka 
 mc event list myminio/charliedemo
+
+
+kubectl exec -it my-cluster-kafka-0 -n kafka -- /bin/bash
+./bin/kafka-console-consumer.sh --topic DEMO --bootstrap-server localhost:9092 --from-beginning
+
+
+mc cp /var/log/hawkey.log myminio/charliedemo/initial/
+
+{
+    "EventName": "s3:ObjectCreated:Put",
+    "Key": "charliedemo/initial/hawkey.log",
+    "Records": [
+        {
+            "eventVersion": "2.0",
+            "eventSource": "minio:s3",
+            "awsRegion": "",
+            "eventTime": "2025-01-23T14:52:39.116Z",
+            "eventName": "s3:ObjectCreated:Put",
+            "userIdentity": {
+                "principalId": "minio"
+            },
+            "requestParameters": {
+                "principalId": "minio",
+                "region": "",
+                "sourceIPAddress": "10.85.1.1"
+            },
+            "responseElements": {
+                "x-amz-id-2": "8983154828492820730e147e9ebf4e4e4376e279602e167e33c127a95b20d433",
+                "x-amz-request-id": "181D59F971094A02",
+                "x-minio-deployment-id": "7d9e7f32-469b-4fe9-8258-19c6b1900f69",
+                "x-minio-origin-endpoint": "https://minio.ledgerbadger-prod.svc.cluster.local"
+            },
+            "s3": {
+                "s3SchemaVersion": "1.0",
+                "configurationId": "Config",
+                "bucket": {
+                    "name": "charliedemo",
+                    "ownerIdentity": {
+                        "principalId": "minio"
+                    },
+                    "arn": "arn:aws:s3:::charliedemo"
+                },
+                "object": {
+                    "key": "initial%2Fhawkey.log",
+                    "size": 180,
+                    "eTag": "102f9a14b119807dcd625240e8dead21",
+                    "contentType": "text/plain",
+                    "userMetadata": {
+                        "content-type": "text/plain"
+                    },
+                    "versionId": "106eb077-2b1b-453a-8049-5631f24a83ed",
+                    "sequencer": "181D59F9710A958D"
+                }
+            },
+            "source": {
+                "host": "10.85.1.1",
+                "port": "",
+                "userAgent": "MinIO (linux; arm64) minio-go/v7.0.77 mc/RELEASE.2024-10-02T08-27-28Z"
+            }
+        }
+    ]
+}
 
 -p --event post,put,delete
 s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
