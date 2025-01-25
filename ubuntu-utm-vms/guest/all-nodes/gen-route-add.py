@@ -20,7 +20,11 @@ ipBytes = args.startAddress.split(".")
 print(len(args.nodeIps));
 
 def assembleRouteCmd(workerIp, nodeIp, cniInterface):
-  return f"ip route add \"{workerIp}/24\" via \"{nodeIp}\""
+  routeDetails = f"\"{workerIp}/24\" via \"{nodeIp}\""
+  return f"""if ! ip route add {routeDetails} &> /dev/null ; then
+  ip route replace {routeDetails} &> /dev/null
+fi
+  """
 
 def get_interface_ip(ifname):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

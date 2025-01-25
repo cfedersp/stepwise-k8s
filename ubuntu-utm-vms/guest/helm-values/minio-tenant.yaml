@@ -245,7 +245,9 @@ tenant:
     # This is used by MinIO to verify TLS connections from clients using those CAs
     # If you omit this and have clients using TLS certificates minted by an external CA, those connections may fail with warnings around certificate verification.
     # See `Operator CRD: TenantSpec <https://min.io/docs/minio/kubernetes/upstream/reference/operator-crd.html#tenantspec>`__.
-    externalCaCertSecret: [ ]
+    externalCaCertSecret: 
+      - name: my-cluster-cluster-ca
+        type: Opaque
     ###
     # Specify an array of Kubernetes secrets, where each entry corresponds to a secret contains the TLS private key and public certificate pair.
     #

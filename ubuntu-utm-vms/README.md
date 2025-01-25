@@ -217,6 +217,10 @@ kubectl exec -it my-cluster-kafka-0 -n kafka -- /bin/bash
 
 -- kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
 
+# Delete Kafka
+kubectl get kafka my-cluster -n kafka
+kubectl delete kafka my-cluster -n kafka
+
 # Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
 Future task: setup external identity provider so we dont have to handle user credentials here.
@@ -231,9 +235,19 @@ kubectl create ns ledgerbadger-prod
 MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"')
 kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
+ROOTCACERT=$(kubectl get cm kube-root-ca.crt -n kafka -o json | jq -r '.data."ca.crt"')
+kubectl create secret  my-cluster-cluster-ca -n ledgerbadger-prod --cert $ROOTCACERT
+kubectl create secret generic my-cluster-cluster-ca -n ledgerbadger-prod --from-literal=public.crt=$ROOTCACERT
+
 helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
 
 ```
+
+# Pending:
+Trust Kafka by adding its root CA to minio pods /etc/ssl/certs/CAs.
+Kafka doesn't have to use the cluster CA - that creates more maintenance considerations - strimzi exposes its generated certs as secrets.
+This is done by copying the kafka cluster CA secret to the minio namespace, if necessary, then simply specify the secret and type in externalCaCertSecret 
+https://min.io/docs/minio/kubernetes/upstream/operations/network-encryption.html#id4
 
 # Upgrade the Object Store Configuration ???
 Make changes to tenant config without deleting and re-creating it
@@ -250,6 +264,7 @@ kubectl get pods -n ledgerbadger-prod
 
 # MinIO Validation
 -- Install a MinIO Client: kubectl run minio-client --image=bitnami/minio-client --restart=Never
+Use minio ndode: kubectl exec -it myminio-pool-0-0 -n ledgerbadger-prod -- /bin/bash
 
 ## Show Server Configuration
 
