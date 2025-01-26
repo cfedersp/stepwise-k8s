@@ -172,6 +172,10 @@ python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep defa
 chmod 775 cni-routes.sh
 sudo ./cni-routes.sh
 ```
+VMs wont be able to reach services, but pods will.
+# Pending - persist routes 
+https://linuxconfig.org/how-to-add-static-route-with-netplan-on-ubuntu-20-04-focal-fossa-linux
+sudo cat /etc/netplan/50-cloud-init.yaml
 
 # Verify cluster access:
 Copy the keys required by CLI to the preferred location:  
@@ -196,7 +200,7 @@ Not clear how to use KRaft NodePools with our storage configuration - set defaul
 kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 ```
 
-# Validate Kafka
+## Validate Kafka
 Publish + Consume msgs
 kubectl exec -it my-cluster-kafka-0 -n kafka -- /opt/kafka/bin/kafka-console-producer.sh --topic DEMO 
 kubectl exec -it my-cluster-kafka-0 -n kafka -- /opt/kafka/bin/kafka-console-consumer.sh --topic MINIO-BUCKET-NOTIFICATIONS --bootstrap-server localhost:9092 --from-beginning
@@ -217,9 +221,40 @@ kubectl exec -it my-cluster-kafka-0 -n kafka -- /bin/bash
 
 -- kubectl run kafka-consumer -it --image=bitnami/kafka --restart=Never -- kafka-console-consumer.sh --bootstrap-server my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092 --topic MY-DEMO --from-beginning
 
-# Delete Kafka
+## Delete Kafka
 kubectl get kafka my-cluster -n kafka
 kubectl delete kafka my-cluster -n kafka
+
+# Integrate HashiCorp Vault for KMS
+## Demonstrate the vulnerability of unprotected files
+From a VM running an openebs-provisioned logical volume, you can cat /dev/dm-0 special block files and potentially extract data.
+This is left as an exersize for the reader.
+
+## Install Dependency - Secrets CSI Driver 
+This allows Vault Secrets to be mounted as Volumes
+Either install this storage driver or enable the Agent Injector w/ a Service Account bound to the appropriate role - not both.
+```
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
+```
+
+## Install Vault w/o the "Agent Injector" admission controller
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
+kubectl exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > guest/generated/cluster-keys.json
+VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" guest/generated/cluster-keys.json)
+kubectl exec vault-0 -- vault operator unseal $VAULT_UNSEAL_KEY 
+
+
+# Delete Vault + Volumes
+```
+helm uninstall vault hashicorp/vault
+kubectl delete pvc data-vault-0
+```
+
+## Validate Vault - Pending
+certs?
+validation steps?
 
 # Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
@@ -265,7 +300,10 @@ kubectl get pods -n ledgerbadger-prod
 # MinIO Validation
 -- Install a MinIO Client: kubectl run minio-client --image=bitnami/minio-client --restart=Never
 Use minio ndode: kubectl exec -it myminio-pool-0-0 -n ledgerbadger-prod -- /bin/bash
-
+Encrypt a bucket with an external KMS Key
+```
+mc encrypt set sse-kms EXTERNALKEY myminio/charliedemo
+```
 ## Show Server Configuration
 
 mc alias set myminio https://minio.ledgerbadger-prod.svc.cluster.local/  minio minio123
@@ -292,7 +330,7 @@ mc admin info --json myminio
 if your Kafka broken env var is suffixed with _PRIMARY, your SQS endpoint is arn:minio:sqs::PRIMARY:kafka
 
 mc admin config get myminio notify_kafka
-mc admin config set myminio/ notify_kafka:PRIMARY tls_skip_verify="on" 
+mc admin config set myminio/ notify_kafka:PRIMARY tls_skip_verify="off" 
 mc admin service restart myminio/
 mc event add myminio/charliedemo arn:minio:sqs::PRIMARY:kafka 
 mc event list myminio/charliedemo
@@ -361,3 +399,5 @@ mc cp /var/log/hawkey.log myminio/charliedemo/initial/
 
 -p --event post,put,delete
 s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
+
+

@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Get ready to pull some charts
+mkdir -p host-prep/original-reference/charts; 
+cd host-prep/original-reference/charts; 
+
+# Vault CSI - haven't found any customizations to this, so leave it commented out until we find something to improve
+# helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+# helm pull secrets-store-csi-driver/secrets-store-csi-driver
+# tar -xzf secrets-store-csi-driver-*
+# cp secrets-store-csi-driver/values.yaml ../../../guest/helm-values/secrets-store-csi-driver.yaml
+
+# Vault Chart and values
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm pull hashicorp/vault; 
+tar -xzf vault-*; 
+cp vault/values.yaml ../../../guest/helm-values/vault-orig.yaml; 
+cd ../../.. 
+
 # MinIO tenant values
 curl -sLo guest/helm-values/minio-tenant-orig.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml
 
