@@ -290,12 +290,13 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 
 ## Install Vault Chart w/o the "Agent Injector" admission controller
 https://developer.hashicorp.com/vault/docs/platform/k8s/injector
-helm repo add hashicorp https://helm.releases.hashicorp.com
+Note, for Kubernetes 1.24, serviceAccount.createSecret should be false
 ```
+helm repo add hashicorp https://helm.releases.hashicorp.com
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
-kubectl exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+kubectl exec vault-1 -- vault operator init -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
-kubectl exec vault-0 -- vault operator unseal $VAULT_UNSEAL_KEY 
+kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca $VAULT_UNSEAL_KEY 
 ```
 
 ## Install Vault Secrets Operator
