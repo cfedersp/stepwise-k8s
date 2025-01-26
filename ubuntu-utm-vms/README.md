@@ -14,6 +14,20 @@ Finally, we explore sophistications such as running on a separate private networ
 # Tested on:
 UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
  
+# Dictionary:
+- Container: isolated process
+- Manifest:
+- Pod: A group of related containers where 1 is the main process plus some optional support containers that will run on the same CPU. Can exist as a declared descriptor, scheduled to a Node, even though it hasn't started running or have disks attached yet.
+- Persistent Volume: A disk attached to a node, usually exposed as an LVM Volume Group.
+- Persistent Volume Claim: A request by pod for a logical volume and volume mount into that pod.
+- Deployment
+- StatefulSet
+- Role: Allows a service to interact with Kubernetes, creating or modifying resources.
+- Custom Resource Definition: Document Schema that defines custom infrastructure and infrastructure behavior. 
+- Custom Resource or Custom Object: An instance of CRD document
+- Operator: A service that watches changes in Custom Resources and acts upon those changes until the cluster is in the desired state.
+An alternative to deploying with manifests and helm charts, a operator's initial state includes no resources until a Custom Resource is created. Operators have a Role that allow them to create configMaps or Secrets that other components depend on.
+
 # Process Overview:
 ## Prep host:  
 Create ~/.kube/ dir for CLI keys  
@@ -187,6 +201,10 @@ kubectl get nodes
 # Install a Storage Controller
 Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
 Install the chart, but give values so loki doesn't use such a large disk.  
+MayaStor replication is only tested on x86-64. If you try it on apple silicon, you need to configure ARM images (loki-stack.loki.initContainers[0].image: cannot be bitnami/shell)
+Nodes with replicated storage must be labelled openebs.io/engine=mayastor
+-- kubectl label node <node_name> openebs.io/engine=mayastor
+Realistically, you might have Ops-only clusters of replicated storage backing Vault and Minio, then separate application clusters with local storage.
 Check its components start successfully  
 ```
 kubectl apply -f guest/manifests/static/lvm-sc.yaml 
@@ -226,24 +244,67 @@ kubectl get kafka my-cluster -n kafka
 kubectl delete kafka my-cluster -n kafka
 
 # Integrate HashiCorp Vault for KMS
-## Demonstrate the vulnerability of unprotected files
-From a VM running an openebs-provisioned logical volume, you can cat /dev/dm-0 special block files and potentially extract data.
-This is left as an exersize for the reader.
 
-## Install Dependency - Secrets CSI Driver 
-This allows Vault Secrets to be mounted as Volumes
+## Dictionary:
+- Vault
+- CSI Driver: The service that exposes secrets as mountable volumes
+- SecretProviderClass: Directive to expose a secret as a mountable volume
+- Agent Injector: Admission Controller that re-writes pods to include secrets as mounted volumes
+- Vault Secrets Operator:
+## References:
+https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-minikube-tls#create-the-certificate
+https://secrets-store-csi-driver.sigs.k8s.io/getting-started/installation.html
+https://developer.hashicorp.com/vault/tutorials/kubernetes/vault-secrets-operator
+
+## Generate cert and have kubernetes sign it
+https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-minikube-tls#create-the-certificate
+A webserver's TLS cert does not have to be signed by the cluster CA, but vault will 
+```
+source applications/vault/default-ns-env
+export WORKDIR=applications/generated/certs/
+mkdir -p $WORKDIR
+openssl genrsa -out ${WORKDIR}/vault.key 2048
+./applications/vault/create-csr.sh ${WORKDIR}/vault-csr.conf
+openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
+./applications/gen-csr.sh vault ${WORKDIR}/vault.csr
+kubectl create -f ${WORKDIR}/vault-csr.yaml
+kubectl get csr
+kubectl certificate approve vault.svc
+kubectl get csr vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
+kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/vault.ca
+kubectl create secret generic vault-ha-tls \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=vault.key=${WORKDIR}/vault.key \
+   --from-file=vault.crt=${WORKDIR}/vault.crt \
+   --from-file=vault.ca=${WORKDIR}/vault.ca
+
+```
+## NONONO: Install Secrets CSI Driver 
+This allows Vault Secrets to be mounted as Volumes ?when a SecretProviderClass is created?
 Either install this storage driver or enable the Agent Injector w/ a Service Account bound to the appropriate role - not both.
 ```
 helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
 helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
 ```
+## NONONO: Create a SecretProviderClass 
 
-## Install Vault w/o the "Agent Injector" admission controller
+## Install Vault Chart w/o the "Agent Injector" admission controller
+https://developer.hashicorp.com/vault/docs/platform/k8s/injector
 helm repo add hashicorp https://helm.releases.hashicorp.com
+```
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
-kubectl exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > guest/generated/cluster-keys.json
-VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" guest/generated/cluster-keys.json)
+kubectl exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
 kubectl exec vault-0 -- vault operator unseal $VAULT_UNSEAL_KEY 
+```
+
+## Install Vault Secrets Operator
+Exposes Vault Secrets as Kubernetes Secrets
+https://developer.hashicorp.com/vault/docs/platform/k8s/vso/installation
+```
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install --version 0.9.1 vault-secrets-operator hashicorp/vault-secrets-operator
+```
 
 
 # Delete Vault + Volumes
@@ -259,8 +320,17 @@ validation steps?
 # Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
 Future task: setup external identity provider so we dont have to handle user credentials here.
-The secret must contain key 'config.env', containing export or set commands.
+The MinIO config secret must contain key 'config.env', containing export or set commands.
 
+Also, we copy the kafka root cert into a secret and specify that secret and type in externalCaCertSecret 
+so minio pods will trust it.
+
+## Demonstrate the vulnerability of unprotected files
+From a VM running an openebs-provisioned logical volume, you can cat /dev/dm-0 special block files and potentially extract data.
+This is left as an exersize for the reader.
+
+## References:
+https://min.io/docs/minio/kubernetes/upstream/operations/network-encryption.html#id4
 
 ```
 helm repo add minio-operator https://operator.min.io
@@ -277,12 +347,6 @@ kubectl create secret generic my-cluster-cluster-ca -n ledgerbadger-prod --from-
 helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
 
 ```
-
-# Pending:
-Trust Kafka by adding its root CA to minio pods /etc/ssl/certs/CAs.
-Kafka doesn't have to use the cluster CA - that creates more maintenance considerations - strimzi exposes its generated certs as secrets.
-This is done by copying the kafka cluster CA secret to the minio namespace, if necessary, then simply specify the secret and type in externalCaCertSecret 
-https://min.io/docs/minio/kubernetes/upstream/operations/network-encryption.html#id4
 
 # Upgrade the Object Store Configuration ???
 Make changes to tenant config without deleting and re-creating it
