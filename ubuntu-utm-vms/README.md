@@ -204,13 +204,27 @@ Install the chart, but give values so loki doesn't use such a large disk.
 MayaStor replication is only tested on x86-64. If you try it on apple silicon, you need to configure ARM images (loki-stack.loki.initContainers[0].image: cannot be bitnami/shell)
 Nodes with replicated storage must be labelled openebs.io/engine=mayastor
 -- kubectl label node <node_name> openebs.io/engine=mayastor
-Realistically, you might have Ops-only clusters of replicated storage backing Vault and Minio, then separate application clusters with local storage.
 Check its components start successfully  
 ```
 kubectl apply -f guest/manifests/static/lvm-sc.yaml 
 helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-disable-mayastor.yaml
 kubectl get pods -n openebs
 ```
+
+## Note Storage Classes:
+openebs-hostpath
+- mounts a dir on the VM into the container
+- has WaitForFirstConsumer VolumeBindingMode: The Volume controller will wait until the pod scheduler updates a PVC annotation indicating which node
+openebs-lvmpv: (bad - I created this without VolumeBindingMode, and it defauled to Immediate)
+- provisions a Logical Volume, formats it, and mounts it into the container
+- has Immediate VolumeBindingMode
+- How is this assigned to a node?
+
+For pod scheduling to work, the SC must be WaitForFirstConsumer? explain
+
+# Inspect OpenEBS
+kubectl get ds openebs-lvm-localpv-node -n openebs -o yaml
+kubectl get lvmvolume -n openebs
 
 # Install Kafka
 Not clear how to use KRaft NodePools with our storage configuration - set default sc? Use ZK for now.
@@ -294,10 +308,33 @@ Note, for Kubernetes 1.24, serviceAccount.createSecret should be false
 ```
 helm repo add hashicorp https://helm.releases.hashicorp.com
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
-kubectl exec vault-1 -- vault operator init -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+rm applications/generated/cluster-keys.json
+export INITIAL_VAULT_NODE="vault-0"
+kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
-kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca $VAULT_UNSEAL_KEY 
+kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca $VAULT_UNSEAL_KEY 
+echo "Now have the other instances join the first"
+
+kubectl exec -it vault-1 -- /bin/sh
+vault operator raft join -address=https://vault-1.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="$(cat /vault/userconfig/vault-ha-tls/vault.ca)" -leader-client-cert="$(cat /vault/userconfig/vault-ha-tls/vault.crt)" -leader-client-key="$(cat /vault/userconfig/vault-ha-tls/vault.key)" https://vault-0.vault-internal:8200
+exit
+kubectl exec -n $VAULT_K8S_NAMESPACE -ti vault-1 -- vault operator unseal -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $VAULT_UNSEAL_KEY
+
+kubectl exec -it vault-2 -- /bin/sh
+vault operator raft join -address=https://vault-2.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="$(cat /vault/userconfig/vault-ha-tls/vault.ca)" -leader-client-cert="$(cat /vault/userconfig/vault-ha-tls/vault.crt)" -leader-client-key="$(cat /vault/userconfig/vault-ha-tls/vault.key)" https://vault-0.vault-internal:8200
+exit
+kubectl exec -n $VAULT_K8S_NAMESPACE -ti vault-2 -- vault operator unseal -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $VAULT_UNSEAL_KEY
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault status -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+
+export CLUSTER_ROOT_TOKEN=$(cat applications/generated/cluster-keys.json | jq -r ".root_token")
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $CLUSTER_ROOT_TOKEN
+
 ```
+
+## Pending: 
+enable audit storage, validate UI, enable csi provider or secrets operator
+impl ingress controller and enable ingress? how is access controlled?
 
 ## Install Vault Secrets Operator
 Exposes Vault Secrets as Kubernetes Secrets
@@ -462,6 +499,8 @@ mc cp /var/log/hawkey.log myminio/charliedemo/initial/
     ]
 }
 
+# More Notes:
+PodNodeSelector: https://stackoverflow.com/questions/52487333/how-to-assign-a-namespace-to-certain-nodes
 -p --event post,put,delete
 s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
 

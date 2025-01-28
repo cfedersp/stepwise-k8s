@@ -4,14 +4,23 @@
 mkdir -p host-prep/original-reference/charts; 
 cd host-prep/original-reference/charts; 
 
-# Vault CSI - Pull this so we can see whats in it, but right now we dont have anything to improve
+# Add repos
+helm repo add openebs https://openebs.github.io/openebs
 helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm repo add hashicorp https://helm.releases.hashicorp.com
+
+helm repo update
+
+# OpenEBS
+helm pull openebs/openebs
+tar -xzf openebs-*
+
+# Vault CSI - Pull this so we can see whats in it, but right now we dont have anything to improve
 helm pull secrets-store-csi-driver/secrets-store-csi-driver
 tar -xzf secrets-store-csi-driver-*
 cp secrets-store-csi-driver/values.yaml ../../../guest/helm-values/secrets-store-csi-driver-orig.yaml
 
 # Vault Chart and values
-helm repo add hashicorp https://helm.releases.hashicorp.com
 helm pull hashicorp/vault; 
 tar -xzf vault-*; 
 cp vault/values.yaml ../../../guest/helm-values/vault-orig.yaml; 
