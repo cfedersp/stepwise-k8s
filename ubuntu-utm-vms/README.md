@@ -312,24 +312,26 @@ rm applications/generated/cluster-keys.json
 export INITIAL_VAULT_NODE="vault-0"
 kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
-kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca $VAULT_UNSEAL_KEY 
+kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
-kubectl exec -it vault-1 -- /bin/sh
-vault operator raft join -address=https://vault-1.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="$(cat /vault/userconfig/vault-ha-tls/vault.ca)" -leader-client-cert="$(cat /vault/userconfig/vault-ha-tls/vault.crt)" -leader-client-key="$(cat /vault/userconfig/vault-ha-tls/vault.key)" https://vault-0.vault-internal:8200
-exit
-kubectl exec -n $VAULT_K8S_NAMESPACE -ti vault-1 -- vault operator unseal -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $VAULT_UNSEAL_KEY
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="@/vault/userconfig/vault-ha-tls/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
-kubectl exec -it vault-2 -- /bin/sh
-vault operator raft join -address=https://vault-2.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="$(cat /vault/userconfig/vault-ha-tls/vault.ca)" -leader-client-cert="$(cat /vault/userconfig/vault-ha-tls/vault.crt)" -leader-client-key="$(cat /vault/userconfig/vault-ha-tls/vault.key)" https://vault-0.vault-internal:8200
-exit
-kubectl exec -n $VAULT_K8S_NAMESPACE -ti vault-2 -- vault operator unseal -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $VAULT_UNSEAL_KEY
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault status -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
 
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="@/vault/userconfig/vault-ha-tls/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+
+kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
+```
+
+## Inspect HA Vault
+An instance wont appear as a peer until it has been unsealed.
+```
 export CLUSTER_ROOT_TOKEN=$(cat applications/generated/cluster-keys.json | jq -r ".root_token")
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $CLUSTER_ROOT_TOKEN
 
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault status -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
 ```
 
 ## Pending: 
