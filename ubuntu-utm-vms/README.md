@@ -158,7 +158,7 @@ Name: Worker1
 Start the VM.  
 Change hostname  :
 ```
-sudo /usr/share/host/vm-prep/set-hostname-reboot.sh worker1  
+sudo /usr/share/host/vm-prep/set-hostname-clear-mid-reboot.sh worker1  
 ```
 Create Volume Group for application data:
 ```
@@ -331,7 +331,10 @@ export CLUSTER_ROOT_TOKEN=$(cat applications/generated/cluster-keys.json | jq -r
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $CLUSTER_ROOT_TOKEN
 
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault status -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+vault secrets enable -path=secret -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" kv-v2 
+vault kv put -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apitest username="apiuser" password="supersecret"
+vault kv get -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apitest
 ```
 
 ## Pending: 
