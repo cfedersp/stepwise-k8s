@@ -337,6 +337,37 @@ vault kv put -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apite
 vault kv get -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apitest
 ```
 
+## Write a secret that becomes a mountable volume
+https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-secret-store-driver
+
+Create a secret.
+Then create a Vault kubernetes authentication role called 'database' that grants the 'my-app-sa' service account with policy 'internal-app'
+```
+kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+vault kv put -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" secret/db-pass password="db-secret-password"
+vault auth enable -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" kubernetes
+vault write -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+
+vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca"  internal-app - <<EOF
+path "secret/data/db-pass" {
+  capabilities = ["read"]
+}
+EOF
+
+vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" \
+auth/kubernetes/role/database \
+    bound_service_account_names=my-apps-sa \
+    bound_service_account_namespaces=default \
+    policies=internal-app \
+    ttl=20m 
+
+kubectl apply -f guest/manifests/static/vault-database-spc.yaml
+
+kubectl create serviceaccount my-apps-sa
+kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml 
+kubectl exec webapp -- cat /mnt/secrets-store/db-password
+```
+
 ## Pending: 
 enable audit storage, validate UI, enable csi provider or secrets operator
 impl ingress controller and enable ingress? how is access controlled?
