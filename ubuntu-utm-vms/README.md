@@ -41,6 +41,10 @@ Download latest crio and kubernetes package keys
 Install MINISIGN
 https://jedisct1.github.io/minisign/
 
+Install Vualt CLI
+curl -sSL --tlsv1.2 -o ~/Downloads/vault_1.18.4_darwin_arm64.zip 'https://releases.hashicorp.com/vault/1.18.4/vault_1.18.4_darwin_arm64.zip'
+cd ~/opt/utils; unzip ~/Downloads/vault*
+
 Install KES
 https://min.io/docs/kes/cli/
 curl -sSL --tlsv1.2 'https://github.com/minio/kes/releases/latest/download/kes-<OS>-<ARCH>' -o ~/opt/utils/kes
@@ -296,15 +300,15 @@ mkdir -p $WORKDIR/manifests
 openssl genrsa -out ${WORKDIR}/vault.key 2048
 ./applications/vault/create-csr.sh ${WORKDIR}/vault-csr.conf
 openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
-./applications/gen-csr.sh vault ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
+./applications/gen-csr.sh ledgerbadger-vault ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
 kubectl create -f ${WORKDIR}/manifests/vault-csr.yaml
 kubectl get csr
-kubectl certificate approve vault.svc
-kubectl get csr vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
-kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/vault.ca
+kubectl certificate approve ledgerbadger-vault.svc
+kubectl get csr ledgerbadger-vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
+kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-vault.ca
 kubectl create secret generic vault-ca \
    -n $VAULT_K8S_NAMESPACE \
-   --from-file=vault.ca=${WORKDIR}/vault.ca
+   --from-file=vault.ca=${WORKDIR}/ledgerbadger-vault.ca
 
 kubectl create secret generic vault-ha-tls \
    -n $VAULT_K8S_NAMESPACE \
@@ -312,10 +316,6 @@ kubectl create secret generic vault-ha-tls \
    --from-file=vault.crt=${WORKDIR}/vault.crt
 
 ```
-
-## Pending:
-vault cert should allow using the svc address vault.default.svc.cluster.local
--- scripted, but not tested --
 
 ## NONONO: Install Secrets CSI Driver 
 This allows Vault Secrets to be mounted as Volumes ?when a SecretProviderClass is created?
@@ -352,24 +352,41 @@ kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.va
 kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 ```
 
-## Pending: 
-Configure join_retry
+## Didn't work:
+retry_join
 
 ## Inspect HA Vault
 An instance wont appear as a peer until it has been unsealed.
 ```
-export CLUSTER_ROOT_TOKEN=$(cat applications/generated/cluster-keys.json | jq -r ".root_token")
+export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login $CLUSTER_ROOT_TOKEN
 
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200"
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://vault.default.svc.cluster.local:8200" 
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://ledgerbadger-vault.default.svc.cluster.local:8200" 
+
 
 
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
 vault secrets enable -path=secret - kv-v2 
 vault kv put secret/tls/apitest username="apiuser" password="supersecret"
 vault kv get secret/tls/apitest
+```
+
+## Pending: Browser access to your cluster
+https://kenmoini.com/post/2024/02/adding-trusted-root-certificate-authority/#adding-to-mac-os-x---cli
+Install the root CA, having a SAN you want to use to access your local cluster.
+Update the /etc/hosts to point the host to a worker IP
+Create a NodePort service to expose the port
+```
+kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
+vault login -address="https://ledgerbadger-vault.default.svc.cluster.local:8200" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
+VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
+VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
+vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "applications/generated/certs/ledgerbadger-vault.ca"
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain applications/generated/certs/ledgerbadger-vault.ca
+
 ```
 
 ## Write a secret that becomes a mountable volume
