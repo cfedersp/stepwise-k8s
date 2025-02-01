@@ -330,15 +330,16 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 https://developer.hashicorp.com/vault/docs/platform/k8s/injector
 Note, for Kubernetes 1.24, serviceAccount.createSecret should be false
 ```
-rm applications/generated/cluster-keys.json
+sudo rm applications/generated/cluster-keys.json
 helm repo add hashicorp https://helm.releases.hashicorp.com
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
 
 export INITIAL_VAULT_NODE="vault-0"
 kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+
 sudo chown root applications/generated/cluster-keys.json
 sudo chmod go-rw applications/generated/cluster-keys.json
-VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
+VAULT_UNSEAL_KEY=$(sudo jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
 kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
