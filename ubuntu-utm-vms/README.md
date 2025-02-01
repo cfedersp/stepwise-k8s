@@ -291,13 +291,13 @@ https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-minikube-t
 A webserver's TLS cert does not have to be signed by the cluster CA, but vault will 
 ```
 source applications/vault/default-ns-env
-export WORKDIR=applications/generated/certs/
-mkdir -p $WORKDIR
+export WORKDIR=applications/generated/certs
+mkdir -p $WORKDIR/manifests
 openssl genrsa -out ${WORKDIR}/vault.key 2048
 ./applications/vault/create-csr.sh ${WORKDIR}/vault-csr.conf
 openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
-./applications/gen-csr.sh vault ${WORKDIR}/vault.csr
-kubectl create -f ${WORKDIR}/vault-csr.yaml
+./applications/gen-csr.sh vault ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
+kubectl create -f ${WORKDIR}/manifests/vault-csr.yaml
 kubectl get csr
 kubectl certificate approve vault.svc
 kubectl get csr vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
@@ -336,6 +336,8 @@ helm install vault hashicorp/vault --values guest/helm-values/vault.yaml
 
 export INITIAL_VAULT_NODE="vault-0"
 kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+sudo chown root applications/generated/cluster-keys.json
+sudo chmod go-rw applications/generated/cluster-keys.json
 VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
 kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"

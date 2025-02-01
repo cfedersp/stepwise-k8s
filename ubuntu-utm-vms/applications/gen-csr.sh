@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cat > ${WORKDIR}/$1-csr.yaml <<EOF
+cat <<EOF
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
