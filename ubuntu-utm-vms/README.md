@@ -30,10 +30,26 @@ An alternative to deploying with manifests and helm charts, a operator's initial
 
 # Process Overview:
 ## Prep host:  
+Create dir for utils
+mkdir -p ~/opt/utils/
+
 Create ~/.kube/ dir for CLI keys  
 Install helm and kubectl so we can interact with the cluster once its running.  
 Clone this repo  
 Download latest crio and kubernetes package keys  
+./host-prep/download-originals.sh
+Install MINISIGN
+https://jedisct1.github.io/minisign/
+
+Install KES
+https://min.io/docs/kes/cli/
+curl -sSL --tlsv1.2 'https://github.com/minio/kes/releases/latest/download/kes-<OS>-<ARCH>' -o ~/opt/utils/kes
+
+chmod 775 ~/opt/utils/kes
+
+Verify the download
+curl -sSL --tlsv1.2 "https://github.com/minio/kes/releases/latest/download/kes-$(uname)-$(uname -m).minisig" -o ./kes.minisig
+minisign -Vm ./kes -P "RWTx5Zr1tiHQLwG9keckT0c45M3AGeHD6IvimQHpyRywVWGbP1aVSGav"
 
 ## Setup base linux VM:
 Share dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
@@ -286,13 +302,21 @@ kubectl get csr
 kubectl certificate approve vault.svc
 kubectl get csr vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
 kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/vault.ca
+kubectl create secret generic vault-ca \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=vault.ca=${WORKDIR}/vault.ca
+
 kubectl create secret generic vault-ha-tls \
    -n $VAULT_K8S_NAMESPACE \
    --from-file=vault.key=${WORKDIR}/vault.key \
-   --from-file=vault.crt=${WORKDIR}/vault.crt \
-   --from-file=vault.ca=${WORKDIR}/vault.ca
+   --from-file=vault.crt=${WORKDIR}/vault.crt
 
 ```
+
+## Pending:
+vault cert should allow using the svc address vault.default.svc.cluster.local
+-- scripted, but not tested --
+
 ## NONONO: Install Secrets CSI Driver 
 This allows Vault Secrets to be mounted as Volumes ?when a SecretProviderClass is created?
 Either install this storage driver or enable the Agent Injector w/ a Service Account bound to the appropriate role - not both.
@@ -306,35 +330,43 @@ helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver
 https://developer.hashicorp.com/vault/docs/platform/k8s/injector
 Note, for Kubernetes 1.24, serviceAccount.createSecret should be false
 ```
+rm applications/generated/cluster-keys.json
 helm repo add hashicorp https://helm.releases.hashicorp.com
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
-rm applications/generated/cluster-keys.json
+
 export INITIAL_VAULT_NODE="vault-0"
-kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert /vault/userconfig/vault-ha-tls/vault.ca -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 VAULT_UNSEAL_KEY=$(jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
-kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
+kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
-kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="@/vault/userconfig/vault-ha-tls/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
-kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
+kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 
-kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" -leader-ca-cert="@/vault/userconfig/vault-ha-tls/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
-kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" -client-cert="/vault/userconfig/vault-ha-tls/vault.crt" -client-key="/vault/userconfig/vault-ha-tls/vault.key" $VAULT_UNSEAL_KEY
+kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 ```
+
+## Pending: 
+Configure join_retry
 
 ## Inspect HA Vault
 An instance wont appear as a peer until it has been unsealed.
 ```
 export CLUSTER_ROOT_TOKEN=$(cat applications/generated/cluster-keys.json | jq -r ".root_token")
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" $CLUSTER_ROOT_TOKEN
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login $CLUSTER_ROOT_TOKEN
 
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://vault.default.svc.cluster.local:8200" 
+
+
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
-vault secrets enable -path=secret -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" kv-v2 
-vault kv put -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apitest username="apiuser" password="supersecret"
-vault kv get -ca-cert="/vault/userconfig/vault-ha-tls/vault.ca" secret/tls/apitest
+vault secrets enable -path=secret - kv-v2 
+vault kv put secret/tls/apitest username="apiuser" password="supersecret"
+vault kv get secret/tls/apitest
 ```
 
 ## Write a secret that becomes a mountable volume
@@ -342,25 +374,28 @@ https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-secret-sto
 
 Create a secret.
 Then create a Vault kubernetes authentication role called 'database' that grants the 'my-app-sa' service account with policy 'internal-app'
+Then create a service account for use by a pod that mounts a volume provided by the Vault CSI provider.
+The service account does not have a Kubernetes role, but a Vault kubernetes role.
 ```
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
-vault kv put -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" secret/db-pass password="db-secret-password"
-vault auth enable -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" kubernetes
-vault write -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+vault kv put -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" secret/db-pass password="db-secret-password"
+vault auth enable -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" kubernetes
+vault write -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
 
-vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca"  internal-app - <<EOF
+vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" internal-app - <<EOF
 path "secret/data/db-pass" {
   capabilities = ["read"]
 }
 EOF
 
-vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" -ca-cert "/vault/userconfig/vault-ha-tls/vault.ca" \
+vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" \
 auth/kubernetes/role/database \
     bound_service_account_names=my-apps-sa \
     bound_service_account_namespaces=default \
     policies=internal-app \
     ttl=20m 
 
+vault list auth/kubernetes/role
 kubectl apply -f guest/manifests/static/vault-database-spc.yaml
 
 kubectl create serviceaccount my-apps-sa
@@ -368,11 +403,37 @@ kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml
 kubectl exec webapp -- cat /mnt/secrets-store/db-password
 ```
 
+## Enable KES integraation
+https://min.io/docs/kes/cli/
+https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
+```
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- /bin/sh 
+vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" minio-kes - <<EOF
+path "kv/data/*" {
+   capabilities = [ "create", "read" ]
+}
+path "kv/metadata/*" {
+   capabilities = [ "list", "delete" ]       
+}
+EOF
+
+vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" \
+auth/kubernetes/role/minio-kes-role \
+    bound_service_account_names=minio-kes-sa \
+    bound_service_account_namespaces=default \
+    policies=minio-kes \
+    ttl=20m 
+
+exit
+kubectl create serviceaccount minio-kes-sa
+```
+
 ## Pending: 
 enable audit storage, validate UI, enable csi provider or secrets operator
 impl ingress controller and enable ingress? how is access controlled?
 
-## Install Vault Secrets Operator
+## DO NOT DO THIS: Install Vault Secrets Operator
+CSI is better than native secrets
 Exposes Vault Secrets as Kubernetes Secrets
 https://developer.hashicorp.com/vault/docs/platform/k8s/vso/installation
 ```

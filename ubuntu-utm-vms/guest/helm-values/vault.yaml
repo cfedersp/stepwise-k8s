@@ -593,6 +593,10 @@ server:
   # via toYaml rather than pre-processed like the extraVolumes value.
   # The purpose is to make it easy to share volumes between containers.
   volumes:
+    - name: vault-trust
+      secret:
+        defaultMode: 292
+        secretName: vault-ca
     - name: userconfig-vault-ha-tls
       secret:
         defaultMode: 420
@@ -603,8 +607,11 @@ server:
   # via toYaml rather than pre-processed like the extraVolumes value.
   # The purpose is to make it easy to share volumes between containers.
   volumeMounts:
-    - mountPath: /vault/userconfig/vault-ha-tls
-      name: userconfig-vault-ha-tls
+    - name: vault-trust
+      mountPath: /etc/ssl/certs
+      readOnly: true
+    - name: userconfig-vault-ha-tls
+      mountPath: /vault/userconfig/vault-ha-tls
       readOnly: true
 
   # Affinity Settings

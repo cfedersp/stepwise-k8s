@@ -17,8 +17,9 @@ keyUsage = nonRepudiation, digitalSignature, keyEncipherment, dataEncipherment
 extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = @alt_names
 [alt_names]
-DNS.1 = *.${VAULT_SERVICE_NAME}
-DNS.2 = *.${VAULT_SERVICE_NAME}.${VAULT_K8S_NAMESPACE}.svc.${K8S_CLUSTER_NAME}
-DNS.3 = *.${VAULT_K8S_NAMESPACE}
+DNS.1 = *.${VAULT_HEADLESS_SERVICE_NAME}
+DNS.2 = *.${VAULT_HEADLESS_SERVICE_NAME}.${VAULT_K8S_NAMESPACE}.svc.${K8S_CLUSTER_NAME}
+DNS.3 = ${VAULT_SERVICE_NAME}.${VAULT_K8S_NAMESPACE}.svc.${K8S_CLUSTER_NAME}
+DNS.4 = *.${VAULT_K8S_NAMESPACE}
 IP.1 = 127.0.0.1
 EOF
