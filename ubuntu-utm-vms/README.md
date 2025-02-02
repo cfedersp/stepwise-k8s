@@ -44,7 +44,10 @@ A revoked token causes all tokens generated from that token to also get revoked.
 Queries for dynamic tokens include the durable Lease ID in the response.
 Where can we use temporary tokens? 
 
-Sealing and Unsealing: https://developer.hashicorp.com/vault/docs/concepts/seal
+Sealing and Unsealing: 
+https://developer.hashicorp.com/vault/docs/concepts/seal
+Just because an instance is running doesn't allow it to decrypt any data.
+it must be authorized with a key that is only kept in memory.
 who can do this? At what times is the vault sealed? What does a sealed Vault prevent? How is the root cluster key stored?
 
 Namespace lock:
@@ -406,6 +409,7 @@ vault kv get secret/tls/apitest
 ```
 
 ## Pending: Browser access to your cluster
+https://www.reddit.com/r/MacOS/comments/1fjopdm/something_has_changed_in_sequoia_in_regards_to/
 https://kenmoini.com/post/2024/02/adding-trusted-root-certificate-authority/#adding-to-mac-os-x---cli
 Install the root CA, having a SAN you want to use to access your local cluster.
 Update the /etc/hosts to point the host to a worker IP
@@ -419,11 +423,15 @@ vault login -address="https://ledgerbadger-vault.default.svc.cluster.local:8200"
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
 VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
 echo $VAULT_ADDR/ui
-curl $VAULT_ADDR/ui
+curl -L $VAULT_ADDR/ui
 vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "applications/generated/certs/ledgerbadger-vault.ca"
 vault operator raft list-peers  -address "$VAULT_ADDR" 
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain applications/generated/certs/ledgerbadger-vault.ca
 vault operator raft list-peers  -address "$VAULT_ADDR" 
+
+vault auth enable -address "$VAULT_ADDR" userpass 
+vault write -address "$VAULT_ADDR" auth/userpass/users/charlie policies=default password=vault@1
+
 ```
 
 ## Write a secret that becomes a mountable volume
