@@ -15,16 +15,26 @@ helm repo update
 helm pull openebs/openebs
 tar -xzf openebs-*
 
-# Vault CSI - Pull this so we can see whats in it, but right now we dont have anything to improve
-helm pull secrets-store-csi-driver/secrets-store-csi-driver
-tar -xzf secrets-store-csi-driver-*
-cp secrets-store-csi-driver/values.yaml ../../../guest/helm-values/secrets-store-csi-driver-orig.yaml
+# Vault CSI - This is built-in to the vault chart
+# helm pull secrets-store-csi-driver/secrets-store-csi-driver
+# tar -xzf secrets-store-csi-driver-*
+# cp secrets-store-csi-driver/values.yaml ../../../guest/helm-values/secrets-store-csi-driver-orig.yaml
 
 # Vault Chart and values
 helm pull hashicorp/vault; 
 tar -xzf vault-*; 
 cp vault/values.yaml ../../../guest/helm-values/vault-orig.yaml; 
 cd ../../.. 
+
+# Kafka
+curl -L -o $MANIFESTDIR/strimzi-crds-operators.yaml https://strimzi.io/install/latest?namespace=mydemo
+curl -L -o $MANIFESTDIR/strimzi-kafka.yaml  https://strimzi.io/examples/latest/kafka/kafka-persistent-single.yaml
+
+# SSLScan
+git clone git@github.com:rbsec/sslscan.git
+cd sslscan
+make static
+cp sslscan ~/opt/utils/
 
 # MinIO tenant values
 curl -sLo guest/helm-values/minio-tenant-orig.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml

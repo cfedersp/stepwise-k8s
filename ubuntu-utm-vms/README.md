@@ -25,10 +25,41 @@ UTM 4.6.2(104) on Apple M4 running Sequoai 15.2
 - Role: Allows a service to interact with Kubernetes, creating or modifying resources.
 - Custom Resource Definition: Document Schema that defines custom infrastructure and infrastructure behavior. 
 - Custom Resource or Custom Object: An instance of CRD document
-- Operator: A service that watches changes in Custom Resources and acts upon those changes until the cluster is in the desired state.
-An alternative to deploying with manifests and helm charts, a operator's initial state includes no resources until a Custom Resource is created. Operators have a Role that allow them to create configMaps or Secrets that other components depend on.
+- Operator: An admin service that watches changes in Custom Resources and acts upon those changes until the cluster is in the desired state.
+An operator's initial state includes no resources until a Custom Resource is created. Operators have a Role that allow them to create configMaps or Secrets that other components depend on. They orchestrate software runtimes by manaaging complex inter-dependencies for you.
 
 # Process Overview:
+## Strategize:
+Security:
+Keys, Passwords and mTLS Client Certs must be stored in Vault and mounted directly into pods with reduced permissions.
+Root Keys can be(is automatically) stored in Vault, but must be stored outside the VM, perhaps in cold(er) storage with restricted permissions.
+Public Keys, CA Certificates and TLS Certificates can be kubernetes secrets. Storing them in Vault is not necessary but nice to keep inventory in 1 place.
+
+Signing keys: ??
+
+Temporary Tokens/Dynamic Secrets: 
+https://developer.hashicorp.com/vault/docs/concepts/lease
+These are represented in Vault as metadata called a *Lease*. leases can be renewed or revoked. When a token's TTL expires, it is revoked.
+A revoked token causes all tokens generated from that token to also get revoked.
+Queries for dynamic tokens include the durable Lease ID in the response.
+Where can we use temporary tokens? 
+
+Sealing and Unsealing: https://developer.hashicorp.com/vault/docs/concepts/seal
+who can do this? At what times is the vault sealed? What does a sealed Vault prevent? How is the root cluster key stored?
+
+Namespace lock:
+https://developer.hashicorp.com/vault/docs/concepts/namespace-api-lock
+lock a subset of Vault endpoints and all descendents.
+
+Identity:
+Vault OIDC: https://developer.hashicorp.com/vault/docs/concepts/oidc-provider
+
+Encryption:
+
+Replication:
+
+Back-ups:
+
 ## Prep host:  
 Create dir for utils
 mkdir -p ~/opt/utils/
@@ -379,14 +410,20 @@ https://kenmoini.com/post/2024/02/adding-trusted-root-certificate-authority/#add
 Install the root CA, having a SAN you want to use to access your local cluster.
 Update the /etc/hosts to point the host to a worker IP
 Create a NodePort service to expose the port
+May need to change a sys
+In Chrome Settings, Disable Secure DNS: chrome://settings/security
+In System Settings, Privacy & Security -> Network, allow Chrome.
 ```
 kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
 vault login -address="https://ledgerbadger-vault.default.svc.cluster.local:8200" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
 VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
+echo $VAULT_ADDR/ui
+curl $VAULT_ADDR/ui
 vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "applications/generated/certs/ledgerbadger-vault.ca"
+vault operator raft list-peers  -address "$VAULT_ADDR" 
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain applications/generated/certs/ledgerbadger-vault.ca
-
+vault operator raft list-peers  -address "$VAULT_ADDR" 
 ```
 
 ## Write a secret that becomes a mountable volume
