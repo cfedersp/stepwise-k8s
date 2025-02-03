@@ -332,7 +332,8 @@ source applications/vault/default-ns-env
 export WORKDIR=applications/generated/certs
 mkdir -p $WORKDIR/manifests
 openssl genrsa -out ${WORKDIR}/vault.key 2048
-./applications/vault/create-csr.sh ${WORKDIR}/vault-csr.conf
+source applications/default-ns-env VAULT
+./applications/create-csr-conf.sh vault > ${WORKDIR}/vault-csr.conf
 openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
 ./applications/gen-csr.sh ledgerbadger-vault ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
 kubectl create -f ${WORKDIR}/manifests/vault-csr.yaml
@@ -340,6 +341,7 @@ kubectl get csr
 kubectl certificate approve ledgerbadger-vault.svc
 kubectl get csr ledgerbadger-vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
 kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-vault.ca
+openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-vault.ca
 kubectl create secret generic vault-ca \
    -n $VAULT_K8S_NAMESPACE \
    --from-file=vault.ca=${WORKDIR}/ledgerbadger-vault.ca
@@ -413,15 +415,17 @@ https://www.reddit.com/r/MacOS/comments/1fjopdm/something_has_changed_in_sequoia
 https://kenmoini.com/post/2024/02/adding-trusted-root-certificate-authority/#adding-to-mac-os-x---cli
 Install the root CA, having a SAN you want to use to access your local cluster.
 Update the /etc/hosts to point the host to a worker IP
-Create a NodePort service to expose the port
-May need to change a sys
+Create a NodePort service to expose the port.
+Adding the trusted cert to KeyChain allows you to stop entering -ca-cert for all commands.
+May need turn off Safe Browsing?
 In Chrome Settings, Disable Secure DNS: chrome://settings/security
 In System Settings, Privacy & Security -> Network, allow Chrome.
 ```
 kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
-vault login -address="https://ledgerbadger-vault.default.svc.cluster.local:8200" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
 VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
+vault login -address="$VAULT_ADDR" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
+
 echo $VAULT_ADDR/ui
 curl -L $VAULT_ADDR/ui
 vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "applications/generated/certs/ledgerbadger-vault.ca"
@@ -443,9 +447,9 @@ Then create a service account for use by a pod that mounts a volume provided by 
 The service account does not have a Kubernetes role, but a Vault kubernetes role.
 ```
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
-vault kv put -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" secret/db-pass password="db-secret-password"
-vault auth enable -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" kubernetes
-vault write -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+vault kv put -address "$VAULT_ADDR" secret/db-pass password="db-secret-password"
+vault auth enable -address "$VAULT_ADDR" kubernetes
+vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
 
 vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" internal-app - <<EOF
 path "secret/data/db-pass" {
@@ -472,8 +476,9 @@ kubectl exec webapp -- cat /mnt/secrets-store/db-password
 https://min.io/docs/kes/cli/
 https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
 ```
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- /bin/sh 
-vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" minio-kes - <<EOF
+
+
+vault policy write  -address "$VAULT_ADDR" minio-kes - <<EOF
 path "kv/data/*" {
    capabilities = [ "create", "read" ]
 }
@@ -482,7 +487,7 @@ path "kv/metadata/*" {
 }
 EOF
 
-vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" \
+vault write -address "$VAULT_ADDR" \
 auth/kubernetes/role/minio-kes-role \
     bound_service_account_names=minio-kes-sa \
     bound_service_account_namespaces=default \
@@ -516,6 +521,57 @@ kubectl delete pvc data-vault-0
 ## Validate Vault - Pending
 certs?
 validation steps?
+
+# Pending: stop using vault.ca as ledgerbadger-vault.ca: client cert should be signed by Vault.ca. Can be a copy for 1 way trust, but better to be a signed intermediate cert for 2 way, revocable trust.
+
+# Pending: minio with kes/Vault integration using kubernetes service account
+https://github.com/minio/kes
+Kubernetes service account means we dont have to configure mTLS.
+create and configure kes service account - tenant.kes.serviceAccountName? yes. done
+create TLS certs for kes. If TLS certs dont use CA trusted by Vault (kubernetes), then multiple CAs must be mounted under /etc/ssl/certs/.
+install kes certs as kubernetes secrets. done
+mount the secrets into kes server in minio-tenant.yaml - done by chart
+specify tls certs in kes config. half done?
+specify tls certs in kes-vault config. half done?
+If CSI is invoking Vault, why is kubernetes the CA?
+create Kubernetes Vault Policy + Role that allows access to ledgerbadger secrets. done
+create minio service account? done
+configure kes
+what is path to tls cert files?
+what is MINIO_KES_IDENTITY?
+what is KMS key name: my-minio-key? is this a default key for the tenant when one is not specified?
+deploy minio tenant
+
+```
+source applications/default-ns-env kes
+export WORKDIR=applications/generated/certs
+openssl genrsa -out ${WORKDIR}/kes.key 2048
+./applications/create-csr-conf.sh ledgerbadger-kes > ${WORKDIR}/kes-csr.conf
+openssl req -new -key ${WORKDIR}/kes.key -out ${WORKDIR}/kes.csr -config ${WORKDIR}/kes-csr.conf
+./applications/gen-csr.sh ledgerbadger-kes ${WORKDIR}/kes.csr > ${WORKDIR}/manifests/kes-csr.yaml
+kubectl create -f ${WORKDIR}/manifests/kes-csr.yaml
+kubectl get csr
+kubectl certificate approve ledgerbadger-kes.svc
+kubectl get csr ledgerbadger-kes.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/kes.crt
+kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-kes.ca
+openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-kes.ca
+kubectl create secret generic kes-ca \
+   -n $CERT_K8S_NAMESPACE \
+   --from-file=kes.ca=${WORKDIR}/ledgerbadger-kes.ca
+
+kubectl create secret generic kes-ha-tls \
+   -n $CERT_K8S_NAMESPACE \
+   --from-file=kes.key=${WORKDIR}/kes.key \
+   --from-file=kes.crt=${WORKDIR}/kes.crt
+```
+
+DONT: Generate a client cert for kes
+```
+vault secrets enable pki
+vault write -field=certificate pki/root/generate/internal \
+        common_name="dc1.consul" \
+        ttl=87600h > CA_cert.crt
+```
 
 # Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  

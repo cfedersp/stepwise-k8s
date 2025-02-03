@@ -24,11 +24,22 @@ tar -xzf openebs-*
 helm pull hashicorp/vault; 
 tar -xzf vault-*; 
 cp vault/values.yaml ../../../guest/helm-values/vault-orig.yaml; 
-cd ../../.. 
+
 
 # Kafka
 curl -L -o $MANIFESTDIR/strimzi-crds-operators.yaml https://strimzi.io/install/latest?namespace=mydemo
 curl -L -o $MANIFESTDIR/strimzi-kafka.yaml  https://strimzi.io/examples/latest/kafka/kafka-persistent-single.yaml
+
+
+# MinIO tenant values
+helm pull minio-operator/operator
+tar -xzf operator-*
+mv operator minio-operator
+cp minio-operator/values.yaml guest/helm-values/minio-tenant-orig.yaml
+# curl -sLo guest/helm-values/minio-tenant-orig.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml
+
+# Done with charts
+cd ../../.. 
 
 # SSLScan
 git clone git@github.com:rbsec/sslscan.git
@@ -36,8 +47,6 @@ cd sslscan
 make static
 cp sslscan ~/opt/utils/
 
-# MinIO tenant values
-curl -sLo guest/helm-values/minio-tenant-orig.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml
 
 # haven't gotten NodePools to work yet. All KRaft COs use NodePools
 # CO_FILE='guest/manifests/static/kafka-kraft-cluster.yaml'

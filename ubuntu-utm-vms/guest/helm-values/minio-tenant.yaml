@@ -383,7 +383,7 @@ tenant:
   additionalVolumeMounts: [ ]
   # Define configuration for KES (stateless and distributed key-management system)
   # Refer https://github.com/minio/kes
-  #kes:
+  kes:
   #  ## Image field:
   #  # Image from tag (original behavior), for example:
   #  # image:
@@ -393,14 +393,14 @@ tenant:
   #  # image:
   #  #   repository: quay.io/minio/kes@sha256
   #  #   digest: fb15af611149892f357a8a99d1bcd8bf5dae713bd64c15e6eb27fbdb88fc208b
-  #  image:
-  #    repository: quay.io/minio/kes
-  #    tag: 2024-09-11T07-22-50Z
-  #    pullPolicy: IfNotPresent
+    image:
+      repository: quay.io/minio/kes
+      tag: 2024-09-11T07-22-50Z
+      pullPolicy: IfNotPresent
   #  env: [ ]
-  #  replicas: 2
-  #  configuration: |-
-  #    address: :7373
+    replicas: 1
+    configuration: |-
+      address: :7373
   #    tls:
   #      key: /tmp/kes/server.key   # Path to the TLS private key
   #      cert: /tmp/kes/server.crt # Path to the TLS certificate
@@ -417,25 +417,22 @@ tenant:
   #    log:
   #      error: on
   #      audit: off
-  #    keystore:
+      keystore:
   #      # KES configured with fs (File System mode) doesn't work in Kubernetes environments and is not recommended
   #      # use a real KMS
   #      # fs:
   #      #   path: "./keys" # Path to directory. Keys will be stored as files. Not Recommended for Production.
-  #      vault:
-  #        endpoint: "http://vault.default.svc.cluster.local:8200" # The Vault endpoint
-  #        namespace: "" # An optional Vault namespace. See: https://www.vaultproject.io/docs/enterprise/namespaces/index.html
-  #        prefix: "my-minio"    # An optional K/V prefix. The server will store keys under this prefix.
-  #        approle:    # AppRole credentials. See: https://www.vaultproject.io/docs/auth/approle.html
-  #          id: "<YOUR APPROLE ID HERE>"      # Your AppRole Role ID
-  #          secret: "<YOUR APPROLE SECRET ID HERE>"  # Your AppRole Secret ID
-  #          retry: 15s  # Duration until the server tries to re-authenticate after connection loss.
-  #        tls:        # The Vault client TLS configuration for mTLS authentication and certificate verification
-  #          key: ""     # Path to the TLS client private key for mTLS authentication to Vault
-  #          cert: ""    # Path to the TLS client certificate for mTLS authentication to Vault
-  #          ca: ""      # Path to one or multiple PEM root CA certificates
-  #        status:     # Vault status configuration. The server will periodically reach out to Vault to check its status.
-  #          ping: 10s   # Duration until the server checks Vault's status again.
+        vault:
+          endpoint: "http://vault.default.svc.cluster.local:8200"
+          engine:    secrets
+          version:   v2
+          namespace: default
+          prefix:    ledgerbadger
+          kubernetes:   
+            engine:  kubernetes
+            role:    default
+            jwt:     "/var/run/secrets/kubernetes.io/serviceaccount"
+        
   #      # aws:
   #      #   # The AWS SecretsManager key store. The server will store
   #      #   # secret keys at the AWS SecretsManager encrypted with
@@ -449,8 +446,8 @@ tenant:
   #      #       secretkey: ""  # Your AWS Secret Key
   #      #       token: ""      # Your AWS session token (usually optional)
   #  imagePullPolicy: "IfNotPresent"
-  #  externalCertSecret: null
-  #  clientCertSecret: null
+    externalCertSecret: "kes-ha-tls"
+    clientCertSecret: "kes-ca"
   #  # Key name to be created on the KMS, default is "my-minio-key"
   #  keyName: ""
   #  resources: { }
@@ -462,7 +459,7 @@ tenant:
   #  tolerations: [ ]
   #  annotations: { }
   #  labels: { }
-  #  serviceAccountName: ""
+    serviceAccountName: "minio-kes-sa"
   #  securityContext:
   #    runAsUser: 1000
   #    runAsGroup: 1000
