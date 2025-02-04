@@ -357,7 +357,7 @@ tenant:
   serviceMetadata: { }
   ###
   # Add environment variables to be set in MinIO container (https://github.com/minio/minio/tree/master/docs/config)
-  env: [ ]
+  # env: []
   ###
   # PriorityClassName indicates the Pod priority and hence importance of a Pod relative to other Pods.
   # This is applied to MinIO pods only.
@@ -367,7 +367,11 @@ tenant:
   # An array of `Volumes <https://kubernetes.io/docs/concepts/storage/volumes/>`__ which the Operator can mount to Tenant pods.
   #
   # The volumes must exist *and* be accessible to the Tenant pods.
-  additionalVolumes: [ ]
+  additionalVolumes:
+    - name: kes-cred
+      secret:
+        defaultMode: 292
+        secretName: minio-ledgerbadger-prod-kes-cred
   ###
   # An array of volume mount points associated to each Tenant container.
   # 
@@ -380,7 +384,10 @@ tenant:
   #      mountPath: /path/to/mount
   #
   # The ``name`` field must correspond to an entry in the ``additionalVolumes`` array.
-  additionalVolumeMounts: [ ]
+  additionalVolumeMounts: 
+    - name: kes-cred
+      mountPath: /kes
+      readOnly: true
   # Define configuration for KES (stateless and distributed key-management system)
   # Refer https://github.com/minio/kes
   kes:
@@ -401,33 +408,43 @@ tenant:
     replicas: 1
     configuration: |-
       address: :7373
-  #    tls:
-  #      key: /tmp/kes/server.key   # Path to the TLS private key
-  #      cert: /tmp/kes/server.crt # Path to the TLS certificate
-  #      proxy:
-  #        identities: []
-  #        header:
-  #          cert: X-Tls-Client-Cert
-  #    admin:
-  #      identity: ${MINIO_KES_IDENTITY}
-  #    cache:
-  #      expiry:
-  #        any: 5m0s
-  #        unused: 20s
-  #    log:
-  #      error: on
-  #      audit: off
+      tls:
+        key: /tmp/kes/server.key
+        cert: /tmp/kes/server.crt
+      admin:
+        identity: 70d80035b100a05d9fa9b2059ba1b78bd404bea9730daedcbbc705534d1515d2
+      cache:
+        expiry:
+          any: 5m0s
+          unused: 20s
+      policy:
+        minio-server:
+          allow:
+            - /v1/key/create/*
+            - /v1/key/generate/*
+            - /v1/key/decrypt/*
+            - /v1/key/bulk/decrypt
+            - /v1/key/list/*
+            - /v1/status
+            - /v1/metrics
+            - /v1/log/audit
+            - /v1/log/error
+          deny:
+            - /v1/key/generate/my-app-internal*
+            - /v1/key/decrypt/my-app-internal*
+          identities: 
+            - "750293273b51f2b8e111009709613f60b33f03f3b8f43c3e1bfc7c4d8ef7fea7"
+      log:
+        error: on
+        audit: off
       keystore:
-  #      # KES configured with fs (File System mode) doesn't work in Kubernetes environments and is not recommended
-  #      # use a real KMS
-  #      # fs:
-  #      #   path: "./keys" # Path to directory. Keys will be stored as files. Not Recommended for Production.
         vault:
           endpoint: "http://vault.default.svc.cluster.local:8200"
           engine:    secrets
           version:   v2
           namespace: default
           prefix:    ledgerbadger
+          
           kubernetes:   
             engine:  kubernetes
             role:    default
@@ -446,10 +463,9 @@ tenant:
   #      #       secretkey: ""  # Your AWS Secret Key
   #      #       token: ""      # Your AWS session token (usually optional)
   #  imagePullPolicy: "IfNotPresent"
-    externalCertSecret: "kes-ha-tls"
-    clientCertSecret: "kes-ca"
+    
   #  # Key name to be created on the KMS, default is "my-minio-key"
-  #  keyName: ""
+    keyName: "my-minio-key"
   #  resources: { }
   #  nodeSelector: { }
   #  affinity:
@@ -510,5 +526,5 @@ ingress:
 #      name: {{ dig "tenant" "configSecret" "name" "" (.Values | merge (dict)) }}
 #    stringData:
 #      config.env: |-
-#        export MINIO_ROOT_USER='minio'
+#        export MINIO_KMS_KES_CERT_FILE='/kes/minio-kes.crt'
 #        export MINIO_ROOT_PASSWORD='minio123'

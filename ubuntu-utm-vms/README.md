@@ -478,24 +478,23 @@ https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
 ```
 
 
-vault policy write  -address "$VAULT_ADDR" minio-kes - <<EOF
-path "kv/data/*" {
+vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes - <<EOF
+path "kv/data/ledgerbadger/*" {
    capabilities = [ "create", "read" ]
 }
-path "kv/metadata/*" {
+path "kv/metadata/ledgerbadger/*" {
    capabilities = [ "list", "delete" ]       
 }
 EOF
 
 vault write -address "$VAULT_ADDR" \
-auth/kubernetes/role/minio-kes-role \
+auth/kubernetes/role/minio-ledgerbadger-kes-role \
     bound_service_account_names=minio-kes-sa \
     bound_service_account_namespaces=default \
-    policies=minio-kes \
+    policies=minio-ledgerbadger-kes \
     ttl=20m 
 
-exit
-kubectl create serviceaccount minio-kes-sa
+kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
 ```
 
 ## Pending: 
@@ -526,17 +525,38 @@ validation steps?
 
 # Pending: minio with kes/Vault integration using kubernetes service account
 https://github.com/minio/kes
+https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
+https://min.io/docs/minio/kubernetes/gke/reference/operator-crd.html
 Kubernetes service account means we dont have to configure mTLS.
 create and configure kes service account - tenant.kes.serviceAccountName? yes. done
 create TLS certs for kes. If TLS certs dont use CA trusted by Vault (kubernetes), then multiple CAs must be mounted under /etc/ssl/certs/.
-install kes certs as kubernetes secrets. done
-mount the secrets into kes server in minio-tenant.yaml - done by chart
+Possible to use kes identity, but the API Key and identity are not needed.
+create kes identity for minio. It is its own authentication mechanism, not mTLS, does not use kubernetes, so does not need to be same name as service account.
+Add the kes policy to kes config. It refers to kes endpoints, not vault endpoints. Either set the policy w/ minio indentity ..OR.. give minio admin access by setting .root to the minio identity
+later: create kes identity for CLI access, will be set in .admin.identity
+install kes TLS certs as kubernetes secret. done
+install minio kes identity cert as kubernetes secret. done
+
+prefix: keyspace for the tenant. should be reflected in the access policy.
+what are keys? transit?
+How does the mounted secret become env var?
+
+mount the CA secret into kes  server in minio-tenant.yaml - done by chart - we simply mention the secret
+mount the TLS secret into kes server in minio-tenant.yaml - done by chart - we simply mention the secret
+mount the minio kes identity?
 specify tls certs in kes config. half done?
 specify tls certs in kes-vault config. half done?
 If CSI is invoking Vault, why is kubernetes the CA?
 create Kubernetes Vault Policy + Role that allows access to ledgerbadger secrets. done
 create minio service account? done
 configure kes
+
+Using kes, create minio client cert. This is a self-signed cert, but its not x509 TLS cert. It cannot be generated or parsed fully by openssl. It does not need to be signed by any CA. The generated key, cert, API key and fingerprint can be stored in Vault, but dont need to be.
+configure its identity in the tenant.kes.admin.identity. The key and cert get configured in minio, not vault or minio's kes config.
+mount the minio client cert secret in minio tenant additionalvolumes.
+configure the minio client cert in minio. note the API KEY: kes:v1:AJ9e6sX9eJiAta8jtGjK1ngRpL1JTBIwcxN6WswNVGYP
+create the default encryption key (EK)? yes: "my-minio-key"
+
 what is path to tls cert files?
 what is MINIO_KES_IDENTITY?
 what is KMS key name: my-minio-key? is this a default key for the tenant when one is not specified?
@@ -553,18 +573,45 @@ kubectl create -f ${WORKDIR}/manifests/kes-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-kes.svc
 kubectl get csr ledgerbadger-kes.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/kes.crt
+DONT! This is the cluster root ca, which is already a secret in every namespace:
 kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-kes.ca
 openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-kes.ca
-kubectl create secret generic kes-ca \
-   -n $CERT_K8S_NAMESPACE \
-   --from-file=kes.ca=${WORKDIR}/ledgerbadger-kes.ca
 
-kubectl create secret generic kes-ha-tls \
-   -n $CERT_K8S_NAMESPACE \
+kubectl create secret tls  kes-tls -n ledgerbadger-prod --cert ${WORKDIR}/kes.crt --key ${WORKDIR}/kes.key
+
+kubectl create secret generic kes-tls \
+   -n ledgerbadger-prod \
    --from-file=kes.key=${WORKDIR}/kes.key \
    --from-file=kes.crt=${WORKDIR}/kes.crt
-```
 
+
+kes identity new --key=${WORKDIR}/minio-ledgerbadger-prod.key --cert=${WORKDIR}/minio-ledgerbadger-prod.crt minio-ledgerbadger-prod
+mkdir -p ${WORKDIR}/kesadmin
+kes identity new --key=${WORKDIR}/kesadmin/charlie.key --cert=${WORKDIR}/kesadmin/charlie.crt charlie
+API: kes:v1:APyZE/WnPqohCZQW+gld1xjEdwEADNfuOPLr2+gtMc8u
+ID: 70d80035b100a05d9fa9b2059ba1b78bd404bea9730daedcbbc705534d1515d2
+
+kubectl create secret generic minio-ledgerbadger-prod-kes-cred \
+   -n ledgerbadger-prod \
+   --from-file=minio-kes.key=${WORKDIR}/minio-ledgerbadger-prod.key \
+   --from-file=minio-kes.crt=${WORKDIR}/minio-ledgerbadger-prod.crt
+
+helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
+helm uninstall ledgerbadger-prod -n ledgerbadger-prod
+```
+kes.configuration.keystore.vault:
+tls:   
+            key: /tmp/kes/server.key   # Path to the TLS private key
+            cert: /tmp/kes/server.crt # Path to the TLS certificate     
+            ca: ./vault.ca
+kes logs:
+WARNING: '--auth' flag is deprecated and no longer honored. Specify the client certificate verification in the config file
+Error: kesconf: invalid tls config: no private key
+fixed by removing cert config from kes. DONT create certs for kes, only identities!
+next error:
+Error: kesconf: failed to read vault kubernetes JWT from '/var/run/secrets/kubernetes.io/serviceaccount': read /var/run/secrets/kubernetes.io/serviceaccount: is a directory
+
+/tmp/kes
 DONT: Generate a client cert for kes
 ```
 vault secrets enable pki
@@ -593,7 +640,8 @@ helm repo add minio-operator https://operator.min.io
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
 kubectl get all -n minio-operator
 kubectl create ns ledgerbadger-prod
-MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"')
+MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"\nexport MINIO_KMS_KES_CERT_FILE="/kes/minio-kes.crt"\nexport MINIO_KMS_KES_KEY_FILE="/kes/minio-kes.key"\nexport MINIO_KMS_KES_KEY_NAME="minio-ledgerbadger-prod"')
+
 kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
 ROOTCACERT=$(kubectl get cm kube-root-ca.crt -n kafka -o json | jq -r '.data."ca.crt"')
@@ -603,6 +651,9 @@ kubectl create secret generic my-cluster-cluster-ca -n ledgerbadger-prod --from-
 helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
 
 ```
+
+# Pending: specify minio env in a secret yaml, not from cli
+See bottom of tenant for an example.
 
 # Upgrade the Object Store Configuration ???
 Make changes to tenant config without deleting and re-creating it
