@@ -454,7 +454,8 @@ vault auth enable -address "$VAULT_ADDR" kubernetes
 export KUBERNETES_PORT_443_TCP_ADDR="192.168.64.7"
 vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
 
-vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" internal-app - <<EOF
+vault secrets enable -address "$VAULT_ADDR" -version=1 kv
+vault policy write  -address "$VAULT_ADDR" internal-app - <<EOF
 path "secret/data/db-pass" {
   capabilities = ["read"]
 }
@@ -483,11 +484,8 @@ https://support.hashicorp.com/hc/en-us/articles/4404389946387-Kubernetes-auth-me
 
 
 vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes - <<EOF
-path "kv/data/ledgerbadger/*" {
-   capabilities = [ "create", "read" ]
-}
-path "kv/metadata/ledgerbadger/*" {
-   capabilities = [ "list", "delete" ]       
+path "kv/*" {
+   capabilities = [ "create", "read", "delete", "list" ]
 }
 EOF
 
@@ -505,8 +503,12 @@ show issuer:
 openssl x509 -in public.crt -noout -text -sha256
 KUBE_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 --d)
 KUBE_HOST=$(kubectl config view --raw --minify --flatten --output='jsonpath={.clusters[].cluster.server}') 
-
-vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true"
+TOKEN_REVIEW_JWT=$(kubectl get secret vault-sa-token -o go-template='{{ .data.token }}' | base64 --decode) 
+vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" 
+Shouldn't neeed this because cluster CA is already trusted?
+kubernetes_ca_cert="$KUBE_CA_CERT" 
+Shouldn't need these because sa is configured for Vault:
+vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true" token_reviewer_jwt="$TOKEN_REVIEW_JWT"
 
 vault read -address "$VAULT_ADDR" auth/kubernetes/config
 
@@ -675,6 +677,14 @@ Code: 403. Errors:
 
 * namespace not authorized
 
+KES started
+next error:
+minio:
+FATAL Failed to connect to KMS: failed to generate data key with KMS key: failed to read key
+vault:
+ Error while dialing: tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2025-02-05T03:27:10Z is before 2025-02-05T04:33:29Z\""
+
+
 not tried
 openssl s_client -connect host:443 \
    -cert cert_and_key.pem \
@@ -691,7 +701,7 @@ vault:
   kubectl get secret kes-configuration -n ledgerbadger-prod -o json | jq -r '.data."server-config.yaml"' | base64 -d
 
 
-/tmp/kes
+kv engine and version were wrong! need to redo the vault role+policy for v1
 DONT: Generate a client cert for kes
 ```
 vault secrets enable pki

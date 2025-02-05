@@ -444,10 +444,8 @@ tenant:
       keystore:
         vault:
           endpoint: "https://vault.default.svc.cluster.local:8200"
-          engine:    secrets
-          version:   v2
-          namespace: ledgerbadger
-          prefix:    minio-kes-
+          engine:    kv
+          version:   v1
           tls:
             key: /tmp/kes/server.key
             cert: /tmp/kes/server.crt
