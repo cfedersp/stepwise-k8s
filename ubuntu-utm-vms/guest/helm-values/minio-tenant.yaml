@@ -406,11 +406,15 @@ tenant:
       pullPolicy: IfNotPresent
   #  env: [ ]
     replicas: 1
+    clientCertSecret: 
+      name: my-cluster-cluster-ca
+      type: generic
     configuration: |-
       address: :7373
       tls:
         key: /tmp/kes/server.key
         cert: /tmp/kes/server.crt
+        ca: /tmp/kes/public.crt
       admin:
         identity: 70d80035b100a05d9fa9b2059ba1b78bd404bea9730daedcbbc705534d1515d2
       cache:
@@ -436,19 +440,23 @@ tenant:
             - "750293273b51f2b8e111009709613f60b33f03f3b8f43c3e1bfc7c4d8ef7fea7"
       log:
         error: on
-        audit: off
+        audit: on
       keystore:
         vault:
-          endpoint: "http://vault.default.svc.cluster.local:8200"
+          endpoint: "https://vault.default.svc.cluster.local:8200"
           engine:    secrets
           version:   v2
-          namespace: default
-          prefix:    ledgerbadger
+          namespace: ledgerbadger
+          prefix:    minio-kes-
+          tls:
+            key: /tmp/kes/server.key
+            cert: /tmp/kes/server.crt
+            ca: /tmp/kes/public.crt
           
           kubernetes:   
             engine:  kubernetes
-            role:    default
-            jwt:     "/var/run/secrets/kubernetes.io/serviceaccount"
+            role:    minio-ledgerbadger-kes-role
+            jwt:     "/var/run/secrets/kubernetes.io/serviceaccount/token"
         
   #      # aws:
   #      #   # The AWS SecretsManager key store. The server will store

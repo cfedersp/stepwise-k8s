@@ -386,6 +386,8 @@ kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-in
 kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
 kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
+
+vault status -address="$VAULT_ADDR"
 ```
 
 ## Didn't work:
@@ -449,6 +451,7 @@ The service account does not have a Kubernetes role, but a Vault kubernetes role
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
 vault kv put -address "$VAULT_ADDR" secret/db-pass password="db-secret-password"
 vault auth enable -address "$VAULT_ADDR" kubernetes
+export KUBERNETES_PORT_443_TCP_ADDR="192.168.64.7"
 vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
 
 vault policy write  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" internal-app - <<EOF
@@ -464,7 +467,7 @@ auth/kubernetes/role/database \
     policies=internal-app \
     ttl=20m 
 
-vault list auth/kubernetes/role
+vault list -address "$VAULT_ADDR" auth/kubernetes/role
 kubectl apply -f guest/manifests/static/vault-database-spc.yaml
 
 kubectl create serviceaccount my-apps-sa
@@ -475,6 +478,7 @@ kubectl exec webapp -- cat /mnt/secrets-store/db-password
 ## Enable KES integraation
 https://min.io/docs/kes/cli/
 https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
+https://support.hashicorp.com/hc/en-us/articles/4404389946387-Kubernetes-auth-method-Permission-Denied-error
 ```
 
 
@@ -490,11 +494,23 @@ EOF
 vault write -address "$VAULT_ADDR" \
 auth/kubernetes/role/minio-ledgerbadger-kes-role \
     bound_service_account_names=minio-kes-sa \
-    bound_service_account_namespaces=default \
+    bound_service_account_namespaces=ledgerbadger-prod \
     policies=minio-ledgerbadger-kes \
     ttl=20m 
 
+
 kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
+
+show issuer:
+openssl x509 -in public.crt -noout -text -sha256
+KUBE_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 --d)
+KUBE_HOST=$(kubectl config view --raw --minify --flatten --output='jsonpath={.clusters[].cluster.server}') 
+
+vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true"
+
+vault read -address "$VAULT_ADDR" auth/kubernetes/config
+
+kubectl apply -f guest/manifests/static/vault-sa.yaml
 ```
 
 ## Pending: 
@@ -610,6 +626,70 @@ Error: kesconf: invalid tls config: no private key
 fixed by removing cert config from kes. DONT create certs for kes, only identities!
 next error:
 Error: kesconf: failed to read vault kubernetes JWT from '/var/run/secrets/kubernetes.io/serviceaccount': read /var/run/secrets/kubernetes.io/serviceaccount: is a directory
+vault url had http
+next error:
+kes:
+Error: Put "https://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login": tls: failed to verify certificate: x509: certificate signed by unknown authority
+vault:
+2025-02-04T18:47:18.858Z [INFO]  http: TLS handshake error from 10.85.6.18:37898: remote error: tls: bad certificate
+
+added clientCertSecret: my-clustercluster-ca, tls.ca: public.crt to tenant config
+
+phony CA gives:
+Error: failed to read TLS CA certificates: stat /tmp/kes/public.crtxxx: no such file or directory
+
+check cert chain:
+kubectl get secret my-cluster-cluster-ca -n ledgerbadger-prod -o json | jq -r '.data."public.crt"' | base64 -d >  public.crt
+kubectl get csr myminio-kes-ledgerbadger-prod-csr -n ledgerbadger-prod -o json | jq -r '.status.certificate' | base64 -d > autokes.crt
+openssl verify -CAfile public.crt applications/generated/certs/vault.crt
+openssl verify -CAfile public.crt autokes.crt
+
+kes tls server config isn't necessarily used as the client cert to Vault. where are the Vault credentials?
+
+mTLS worked.
+next error:
+Error: Error making API request.
+
+Namespace: default
+URL: PUT https://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login
+Code: 400. Errors:
+
+* invalid role name "default"
+
+Fixed role name.
+KES successfully authenticated.
+Next error:
+Error: Error making API request.
+
+Namespace: default
+URL: PUT https://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* could not load backend configuration
+
+enabled kubernetes and wrote kubernetes api url to vault config
+next error:
+Namespace: default
+URL: PUT https://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login
+Code: 403. Errors:
+
+* namespace not authorized
+
+not tried
+openssl s_client -connect host:443 \
+   -cert cert_and_key.pem \
+   -key cert_and_key.pem  \
+   -state -debug
+
+
+kes:
+Error: Put "https://vault.default.svc.cluster.local:8200/v1/auth/kubernetes/login": tls: failed to verify certificate: x509: certificate signed by unknown authority
+vault:
+2025-02-04T19:26:52.855Z [INFO]  http: TLS handshake error from 192.168.64.18:57674: remote error: tls: bad certificate
+
+
+  kubectl get secret kes-configuration -n ledgerbadger-prod -o json | jq -r '.data."server-config.yaml"' | base64 -d
+
 
 /tmp/kes
 DONT: Generate a client cert for kes
