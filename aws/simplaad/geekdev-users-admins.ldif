@@ -1,0 +1,9 @@
+dn: CN=Users,OU=geekdotdev,dc=ad,dc=gotoengineers,dc=com
+cn: Users
+objectClass: top
+objectClass: container
+
+dn: CN=Domain Admins,CN=Users,OU=geekdotdev,DC=ad,DC=gotoengineers,DC=com
+cn: Domain Admins
+objectClass: top
+objectClass: group

@@ -1,0 +1,4 @@
+dn: ou=geekdotdev,dc=ad,dc=gotoengineers,dc=com
+objectClass: top
+objectClass: organizationalUnit
+cn: geekdotdev

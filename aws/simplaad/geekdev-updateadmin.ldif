@@ -1,0 +1,4 @@
+dn: CN=Domain Admins,CN=Users,OU=geekdotdev,DC=ad,DC=gotoengineers,DC=com
+changetype: modify
+add: memberUid
+memberUid: Administrator
