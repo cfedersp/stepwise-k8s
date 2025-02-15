@@ -4,7 +4,7 @@ cat <<EOF
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
-   name: $1.svc
+   name: $1
 spec:
    signerName: kubernetes.io/kubelet-serving
    expirationSeconds: 8640000

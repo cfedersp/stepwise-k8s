@@ -199,6 +199,7 @@ sudo /usr/share/host/guest/master/start-master.sh
 sudo /usr/share/host/guest/master/install-config.sh  
 sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
 sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
+sudo install -m 664 /etc/kubernetes/pki/ca.crt /usr/share/host/guest/generated/ 
 /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
 ```
 
@@ -335,7 +336,7 @@ openssl genrsa -out ${WORKDIR}/vault.key 2048
 source applications/default-ns-env VAULT
 ./applications/create-csr-conf.sh vault > ${WORKDIR}/vault-csr.conf
 openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
-./applications/gen-csr.sh ledgerbadger-vault ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
+./applications/gen-csr.sh ledgerbadger-vault.svc ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
 kubectl create -f ${WORKDIR}/manifests/vault-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-vault.svc
@@ -586,7 +587,7 @@ export WORKDIR=applications/generated/certs
 openssl genrsa -out ${WORKDIR}/kes.key 2048
 ./applications/create-csr-conf.sh ledgerbadger-kes > ${WORKDIR}/kes-csr.conf
 openssl req -new -key ${WORKDIR}/kes.key -out ${WORKDIR}/kes.csr -config ${WORKDIR}/kes-csr.conf
-./applications/gen-csr.sh ledgerbadger-kes ${WORKDIR}/kes.csr > ${WORKDIR}/manifests/kes-csr.yaml
+./applications/gen-csr.sh ledgerbadger-kes.svc ${WORKDIR}/kes.csr > ${WORKDIR}/manifests/kes-csr.yaml
 kubectl create -f ${WORKDIR}/manifests/kes-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-kes.svc
@@ -891,12 +892,52 @@ failed to parse: /container/environment/01-custom/env.yaml
 
 # Pending: Install Calico Networking
 https://docs.tigera.io/calico/latest/getting-started/kubernetes/hardway/install-cni-plugin
+https://hbayraktar.medium.com/how-to-create-a-user-in-a-kubernetes-cluster-and-grant-access-bfeed991a0ef
+
 This will maintain CNI routes for us. Uses existing IPTables.
 Calico needs its own Kubernetes User
 Then replace static ipam CNI plugin with the Calico CNI plugin, which requires its user kubeconfig.
 Finally we install the operator and create an APIServer and ConfigMap.
 Explore: Would prefer ipam.subnet be the VM CIDR?
 
+## Create a User Cert for Calico
+Calico CNI plugin runs outside the cluster, so it needs a kubeconfig. A service account will not work.
+Host:
+```
+mkdir -p guest/generated/certs/
+openssl req -newkey rsa:4096 \
+           -keyout guest/generated/certs/calico-cni.key \
+           -nodes \
+           -out guest/generated/certs/calico-cni.csr \
+           -subj "/CN=calico-cni"
+./guest/utils/gen-user-csr.sh calico-user guest/generated/certs/calico-cni.csr > guest/generated/certs/calico-cni.yaml
+kubectl create -f guest/generated/certs/calico-cni.yaml
+kubectl get csr
+kubectl certificate approve calico-user
+kubectl get csr calico-user -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out guest/generated/certs/calico-user.crt
+
+mkdir -p guest/generated/users/
+APISERVER=$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')
+kubectl config set-cluster kubernetes \
+    --certificate-authority=guest/generated/certs/ca.crt \
+    --embed-certs=true \
+    --server=$APISERVER \
+    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+
+kubectl config set-credentials calico-cni \
+    --client-certificate=guest/generated/certs/calico-user.crt \
+    --client-key=guest/generated/certs/calico-cni.key \
+    --embed-certs=true \
+    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+
+kubectl config set-context default \
+    --cluster=kubernetes \
+    --user=calico-cni \
+    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+
+```
+
+## Install CalicoCtl
 Host:
 ```
 cd ~/opt/utils/
@@ -959,3 +1000,4 @@ https://kubernetes.io/docs/reference/access-authn-authz/authentication/
 
 
 Can vm-prep and guest/all-nodes/ be combined?
+Remove all references to ledgerbadger-vault.ca - its just the cluster root ca.
