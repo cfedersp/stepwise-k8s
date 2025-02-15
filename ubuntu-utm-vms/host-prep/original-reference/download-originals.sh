@@ -41,6 +41,10 @@ cp minio-operator/values.yaml guest/helm-values/minio-tenant-orig.yaml
 # Done with charts
 cd ../../.. 
 
+mkdir -p guest/all-nodes/downloads
+curl -L -o guest/all-nodes/downloads/calico https://github.com/projectcalico/cni-plugin/releases/download/v3.14.0/calico-arm64
+curl -L -o guest/all-nodes/downloads/calico-ipam https://github.com/projectcalico/cni-plugin/releases/download/v3.14.0/calico-ipam-arm64
+
 # SSLScan
 git clone git@github.com:rbsec/sslscan.git
 cd sslscan

@@ -864,3 +864,98 @@ PodNodeSelector: https://stackoverflow.com/questions/52487333/how-to-assign-a-na
 s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
 
 
+# Pending: install LDAP
+https://github.com/osixia/docker-open
+put this env in this repo
+ss should also have a headless service
+if we need fqdn, check one of the forks
+should have a cert!
+```
+kubectl create secret generic ldap-secret \
+   --from-file=env.yaml=$OSS_PROJECTS_HOME/docker-openldap/example/kubernetes/using-secrets/environment/my-env.yaml.example \
+   --from-file=env.startup.yaml=$OSS_PROJECTS_HOME/docker-openldap/example/kubernetes/using-secrets/environment/my-env.startup.yaml.example
+
+kubectl apply -f $OSS_PROJECTS_HOME/docker-openldap/example/kubernetes/using-secrets/ldap-service.yaml
+cp $OSS_PROJECTS_HOME/docker-openldap/example/kubernetes/using-secrets/gce-statefullset.yaml guest/manifests/static/ldap-ss.yaml
+kubectl apply -f guest/manifests/static/ldap-ss.yaml
+
+
+failed to parse: /container/environment/01-custom/env.yaml
+*** WARNING | 2025-02-09 05:14:58 | failed to parse: /container/environment/01-custom/env.startup.yaml
+
+
+*** WARNING | 2025-02-09 05:14:58 | failed to parse: /container/environment/01-custom/env.yaml
+*** WARNING | 2025-02-09 05:14:58 | failed to parse: /container/environment/01-custom/env.startup.yaml
+*** WARNING | 2025-02-09 05:14:58 | failed to parse: /container/environment/01-custom/..2025_02_09_05_14_36.2931846149/env.yaml
+
+
+# Pending: Install Calico Networking
+https://docs.tigera.io/calico/latest/getting-started/kubernetes/hardway/install-cni-plugin
+This will maintain CNI routes for us. Uses existing IPTables.
+Calico needs its own Kubernetes User
+Then replace static ipam CNI plugin with the Calico CNI plugin, which requires its user kubeconfig.
+Finally we install the operator and create an APIServer and ConfigMap.
+Explore: Would prefer ipam.subnet be the VM CIDR?
+
+Host:
+```
+cd ~/opt/utils/
+curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-arm64 -o calicoctl
+chmod +x calicoctl
+curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-amd64 -o kubectl-calico
+chmod +x kubectl-calico
+kubectl calico -h
+
+```
+
+Each Node:
+```
+sudo /usr/share/host/guest/all-nodes/install-calico.sh
+sudo cp /usr/share/host/guest/all-nodes/downloads/calico-ipam /opt/cni/bin/
+
+sudo chmod 755 /opt/cni/bin/calico*
+```
+
+```
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
+or
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
+kubectl apply -f guest/manifests/static/calico-api.yaml
+kubectl get tigerastatus apiserver
+kubectl get ippools
+```
+Enable eBPf in place of IPTables
+
+https://docs.tigera.io/calico/latest/operations/ebpf/enabling-ebpf
+More cpu-efficient than IPTables, and higher throughput.
+Replace kube-proxy, then patch the operator to specify BPF.
+Existing connections will not be interrupted.
+New Connections will be routed to Linux's BPF
+```
+kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":{"non-calico": "true"}}}}}'
+kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"BPF"}}}'
+```
+
+
+Full CalicoCtl Command Set:
+Includes:
+calicoctl nodes
+calicoctl ipam
+calicoctl convert
+calicoctl version
+
+
+## Calico Tutorials:
+https://docs.tigera.io/calico/latest/operations/install-apiserver
+https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart
+
+## Deeper Networking Knowledge:
+Is eth0 on the host or vm and en0 in each pod?
+https://isovalent.com/static/2bc73e7bf249611546428cc2619c8fe4/56f57/Service-Mesh%402x-1.webp
+https://docs.tigera.io/calico/latest/about/kubernetes-training/about-networking
+https://medium.com/@NTTICT/vxlan-explained-930cc825a51
+https://kubernetes.io/docs/reference/access-authn-authz/authentication/
+
+
+
+Can vm-prep and guest/all-nodes/ be combined?
