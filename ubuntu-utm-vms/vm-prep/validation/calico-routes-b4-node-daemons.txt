@@ -1,0 +1,19 @@
+default via 192.168.64.1 dev enp0s1 proto dhcp src 192.168.64.13 metric 100 
+10.85.35.0/26 via 192.168.64.18 dev enp0s1 proto 80 onlink 
+10.85.42.64/26 via 192.168.64.17 dev enp0s1 proto 80 onlink 
+blackhole 10.85.182.0/26 proto 80 
+10.85.182.2 dev cali1ee4c7e36ed scope link 
+10.85.182.3 dev cali212e4693648 scope link 
+10.85.182.4 dev cali5dc124bfd49 scope link 
+10.85.182.5 dev calif3e1eca0721 scope link 
+10.85.182.6 dev cali9193264cf1c scope link 
+10.85.182.7 dev calia6a26a0b33b scope link 
+10.85.182.11 dev cali94397253e5e scope link 
+10.85.182.13 dev calie3334dea742 scope link 
+10.85.182.14 dev cali5d68ac8cfa0 scope link 
+10.85.189.64/26 via 192.168.64.12 dev enp0s1 proto 80 onlink 
+10.85.199.128/26 via 192.168.64.14 dev enp0s1 proto 80 onlink 
+10.85.219.64/26 via 192.168.64.7 dev enp0s1 proto 80 onlink 
+10.85.235.128/26 via 192.168.64.10 dev enp0s1 proto 80 onlink 
+192.168.64.0/24 dev enp0s1 proto kernel scope link src 192.168.64.13 metric 100 
+192.168.64.1 dev enp0s1 proto dhcp scope link src 192.168.64.13 metric 100 

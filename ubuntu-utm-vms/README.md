@@ -960,23 +960,83 @@ sudo /usr/share/host/guest/all-nodes/install-calico-cni.sh
 Host:
 ```
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
-or
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
 kubectl patch installation.operator.tigera.io default --type='json' -p='[{"op": "replace", "path": "/spec/calicoNetwork/ipPools/0/cidr", "value":"10.85.0.0/16"}]'
-
-# ./guest/utils/calico-api-yaml.sh | kubectl delete -f -
+```
+## Validate progress so far
+This shows us 
+```
 kubectl get tigerastatus apiserver
 kubectl get ippools
 kubectl describe tigerastatus calico
 kubectl get installation default -o yaml
 kubectl get pods -n calico-system
 ```
+On a Node:
+This will show us that Calico is working properly within the cluster, but only partly working on the nodes:
+```
+ip addr show
+```
+This shows some calico-created routes, but no intra-VM routes:
+default via 192.168.64.1 dev enp0s1 proto dhcp src 192.168.64.13 metric 100 
+10.85.35.0/26 via 192.168.64.18 dev enp0s1 proto 80 onlink 
+10.85.42.64/26 via 192.168.64.17 dev enp0s1 proto 80 onlink 
+blackhole 10.85.182.0/26 proto 80 
+10.85.182.2 dev cali1ee4c7e36ed scope link 
+10.85.182.3 dev cali212e4693648 scope link 
+10.85.182.4 dev cali5dc124bfd49 scope link 
+10.85.182.5 dev calif3e1eca0721 scope link 
+10.85.182.6 dev cali9193264cf1c scope link 
+10.85.182.7 dev calia6a26a0b33b scope link 
+10.85.182.11 dev cali94397253e5e scope link 
+10.85.182.13 dev calie3334dea742 scope link 
+10.85.182.14 dev cali5d68ac8cfa0 scope link 
+10.85.189.64/26 via 192.168.64.12 dev enp0s1 proto 80 onlink 
+10.85.199.128/26 via 192.168.64.14 dev enp0s1 proto 80 onlink 
+10.85.219.64/26 via 192.168.64.7 dev enp0s1 proto 80 onlink 
+10.85.235.128/26 via 192.168.64.10 dev enp0s1 proto 80 onlink 
+192.168.64.0/24 dev enp0s1 proto kernel scope link src 192.168.64.13 metric 100 
+192.168.64.1 dev enp0s1 proto dhcp scope link src 192.168.64.13 metric 100 
+
+# Install Node Daemons
+We create a cert that typha will accept by using the expected CN (as configured in the deployment template's env).
+Extract the Typha TLS cert, then sign our cert with Typha's CA. We could log the CSR and resulting cert in Kubernetes, but that just creates extra steps, while creating the false impression we might use the Cluster CA - which we dont want to do.
+```
+TYPHA_CLIENT_CN=$(kubectl get deployment calico-typha -n calico-system -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="TYPHA_CLIENTCN") .value')
+openssl req -newkey rsa:4096 \
+           -keyout guest/generated/certs/calico-node.key \
+           -nodes \
+           -out guest/generated/certs/calico-node.csr \
+           -subj "/CN=$TYPHA_CLIENT_CN"
+
+kubectl get secret typha-certs -n calico-system -o json | jq -r '.data."tls.crt"' | base64 -d > guest/generated/certs/typha-tls.crt
+kubectl get secret typha-certs -n calico-system -o json | jq -r '.data."tls.key"' | base64 -d > guest/generated/certs/typha-tls.key
+
+openssl x509 -req -in guest/generated/certs/calico-node.csr \
+                  -CA guest/generated/certs/typha-tls.crt \
+                  -CAkey guest/generated/certs/typha-tls.key \
+                  -CAcreateserial \
+                  -out guest/generated/certs/calico-node.crt \
+                  -days 365
+kubectl create secret generic -n kube-system calico-node-certs --from-file=guest/generated/certs/calico-node.key --from-file=guest/generated/certs/calico-node.crt
+
+APISERVER_IP=$(kubectl get endpoints -n default kubernetes -o json | jq -r '.subsets[0].addresses[0].ip')
+APISERVER_PORT=$(kubectl get endpoints -n default kubernetes -o json | jq -r '.subsets[0].addresses[0].port')
+
+# Theres no NodePort, so why would this work?
+# curl https://calico-typha:5473 -v --cacert guest/generated/certs/typha-tls.crt --resolve calico-typha:5473:$APISERVER_IP --cert guest/generated/certs/calico-node.crt --key guest/generated/certs/calico-node.key
+
+```
+
+## Validate typha cert
+On a Node:
+```
+/usr/share/host/vm-prep/validation/typha-cert.sh
+```
 
 ## Errors:
-IPPool 192.168.0.0/16 is not within the platform's configured pod network CIDR(s) [10.85.0.0/16]"
-
+No SAN matches target name calico-typha
 Enable eBPf in place of IPTables
 
 https://docs.tigera.io/calico/latest/operations/ebpf/enabling-ebpf
@@ -1008,8 +1068,18 @@ https://isovalent.com/static/2bc73e7bf249611546428cc2619c8fe4/56f57/Service-Mesh
 https://docs.tigera.io/calico/latest/about/kubernetes-training/about-networking
 https://medium.com/@NTTICT/vxlan-explained-930cc825a51
 https://kubernetes.io/docs/reference/access-authn-authz/authentication/
-
-
+Role of Calico CSI pods:
+https://github.com/projectcalico/calico/issues/7831
+Have apps Create and use self-signed certs without the Cluster CA:
+https://docs.tigera.io/calico/latest/getting-started/kubernetes/hardway/install-typha
 
 Can vm-prep and guest/all-nodes/ be combined?
 Remove all references to ledgerbadger-vault.ca - its just the cluster root ca.
+
+
+Tools:
+https://github.com/cloudflare/cfssl/releases
+
+Lessons:
+you should not use the Cluster certificate authority for any purpose other than to verify internal Kubernetes endpoints.
+https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster/
