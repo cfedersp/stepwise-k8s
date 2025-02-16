@@ -937,6 +937,8 @@ kubectl config set-context default \
 
 kubectl apply -f guest/manifests/static/calico-cni-role.yaml
 kubectl create clusterrolebinding calico-cni --clusterrole=calico-cni --user=calico-user
+
+kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 ```
 
 ## Install CalicoCtl
@@ -953,20 +955,28 @@ kubectl calico -h
 
 Each Node:
 ```
-sudo /usr/share/host/guest/all-nodes/install-calico.sh
-sudo cp /usr/share/host/guest/all-nodes/downloads/calico-ipam /opt/cni/bin/
-
-sudo chmod 755 /opt/cni/bin/calico*
+sudo /usr/share/host/guest/all-nodes/install-calico-cni.sh
 ```
-
+Host:
 ```
+kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 or
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
-./guest/utils/calico-api-yaml.sh | kubectl apply -f -
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
+kubectl patch installation.operator.tigera.io default --type='json' -p='[{"op": "replace", "path": "/spec/calicoNetwork/ipPools/0/cidr", "value":"10.85.0.0/16"}]'
+
+# ./guest/utils/calico-api-yaml.sh | kubectl delete -f -
 kubectl get tigerastatus apiserver
 kubectl get ippools
+kubectl describe tigerastatus calico
+kubectl get installation default -o yaml
+kubectl get pods -n calico-system
 ```
+
+## Errors:
+IPPool 192.168.0.0/16 is not within the platform's configured pod network CIDR(s) [10.85.0.0/16]"
+
 Enable eBPf in place of IPTables
 
 https://docs.tigera.io/calico/latest/operations/ebpf/enabling-ebpf
