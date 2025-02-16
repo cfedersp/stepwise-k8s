@@ -935,6 +935,8 @@ kubectl config set-context default \
     --user=calico-cni \
     --kubeconfig=guest/generated/users/calico-cni.kubeconfig
 
+kubectl apply -f guest/manifests/static/calico-cni-role.yaml
+kubectl create clusterrolebinding calico-cni --clusterrole=calico-cni --user=calico-user
 ```
 
 ## Install CalicoCtl
@@ -961,7 +963,7 @@ sudo chmod 755 /opt/cni/bin/calico*
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 or
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
-kubectl apply -f guest/manifests/static/calico-api.yaml
+./guest/utils/calico-api-yaml.sh | kubectl apply -f -
 kubectl get tigerastatus apiserver
 kubectl get ippools
 ```
