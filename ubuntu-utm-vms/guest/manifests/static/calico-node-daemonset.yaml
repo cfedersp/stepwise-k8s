@@ -2,7 +2,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: calico-node
-  namespace: kube-system
+  namespace: calico-system
   labels:
     k8s-app: calico-node
 spec:
@@ -159,7 +159,7 @@ spec:
             path: /var/run/nodeagent
         - name: calico-typha-ca
           configMap:
-            name: calico-typha-ca
+            name: tigera-ca-bundle 
         - name: calico-node-certs
           secret:
-            secretName: calico-node-certs
+            secretName: node-certs

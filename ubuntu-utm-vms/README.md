@@ -960,6 +960,7 @@ sudo /usr/share/host/guest/all-nodes/install-calico-cni.sh
 Host:
 ```
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+# For ref: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
 #TODO: fix this so we dont have to patch the pool after the fact
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
@@ -1001,19 +1002,34 @@ blackhole 10.85.182.0/26 proto 80
 192.168.64.1 dev enp0s1 proto dhcp scope link src 192.168.64.13 metric 100 
 
 # Install Node Daemons
+Tigera Operator keeps its CA Key internal, so it created client certs for us.
+We copy the client certs to kube-system for use by calico-node daemonset.
 We create a cert that typha will accept by using the expected CN (as configured in the deployment template's env).
 Extract the Typha TLS cert, then sign our cert with Typha's CA. We could log the CSR and resulting cert in Kubernetes, but that just creates extra steps, while creating the false impression we might use the Cluster CA - which we dont want to do.
 ```
 
-kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.crt"' | base64 -d > guest/generated/certs/calico-node.crt
-kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.key"' | base64 -d > guest/generated/certs/calico-node.key
+# kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.crt"' | base64 -d > guest/generated/certs/calico-node.crt
+# kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.key"' | base64 -d > guest/generated/certs/calico-node.key
+# kubectl create secret generic -n kube-system calico-node-certs --from-file=tls.key=guest/generated/certs/calico-node.key --from-file=tls.crt=guest/generated/certs/calico-node.crt
+# mkdir guest/generated/certs/tigera-ca/
+# kubectl get cm tigera-ca-bundle -n calico-system -o json | jq -r '.data."ca-bundle.crt"' > guest/generated/certs/tigera-ca/ca-bundle.crt
+# kubectl get cm tigera-ca-bundle -n calico-system -o json | jq -r '.data."tigera-ca-bundle.crt"' > guest/generated/certs/tigera-ca/tigera-ca-bundle.crt
+# kubectl create cm calico-typha-ca -n kube-system --from-file=ca-bundle.crt=guest/generated/certs/tigera-ca/ca-bundle.crt --from-file=tigera-ca-bundle.crt=guest/generated/certs/tigera-ca/tigera-ca-bundle.crt
+
+# Make sure the cert CN and the expected value are the same
+openssl x509 -noout -text -in guest/generated/certs/calico-node.crt | grep DNS | cut -d ':' -f2
+kubectl get deployment calico-typha -n calico-system -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="TYPHA_CLIENTCN") .value'
+
 
 # Check if these were created already? by the operator?
-kubectl create -f guest/manifests/static/calico-node-role.yaml
-kubectl create serviceaccount -n kube-system calico-node
-kubectl create clusterrolebinding calico-node --clusterrole=calico-node --serviceaccount=kube-system:calico-node
+# kubectl create -f guest/manifests/static/calico-node-role.yaml
+# kubectl create serviceaccount -n kube-system calico-node
+# kubectl create clusterrolebinding calico-node --clusterrole=calico-node --serviceaccount=calico-system:calico-node
 
-kubectl create -f guest/manifests/static/calico-node-daemonset.yaml
+# kubectl create -f guest/manifests/static/calico-node-daemonset.yaml
+kubectl get pod -l k8s-app=calico-node -n kube-system
+
+
 ```
 
 ## Validate typha cert
@@ -1022,9 +1038,11 @@ On a Node:
 /usr/share/host/vm-prep/validation/typha-cert.sh
 ```
 
-## Errors:
-No SAN matches target name calico-typha
-
+## Next:
+https://docs.tigera.io/calico/latest/getting-started/kubernetes/hardway/configure-bgp-peering
+install calicoctl? This is just a CLI tool that interacts with services. its a nice-to-have.
+install felix? if I dont want IPtables, why do we need this?
+configure BGP Peering?
 
 Enable eBPf in place of IPTables
 
@@ -1072,3 +1090,5 @@ https://github.com/cloudflare/cfssl/releases
 Lessons:
 you should not use the Cluster certificate authority for any purpose other than to verify internal Kubernetes endpoints.
 https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster/
+DaemonSets run outside the cluster and cant receive incoming connections:
+https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/#alternatives-to-daemonset
