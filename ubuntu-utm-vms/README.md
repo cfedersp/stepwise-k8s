@@ -961,6 +961,7 @@ Host:
 ```
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
+#TODO: fix this so we dont have to patch the pool after the fact
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
 kubectl patch installation.operator.tigera.io default --type='json' -p='[{"op": "replace", "path": "/spec/calicoNetwork/ipPools/0/cidr", "value":"10.85.0.0/16"}]'
 ```
@@ -1003,30 +1004,16 @@ blackhole 10.85.182.0/26 proto 80
 We create a cert that typha will accept by using the expected CN (as configured in the deployment template's env).
 Extract the Typha TLS cert, then sign our cert with Typha's CA. We could log the CSR and resulting cert in Kubernetes, but that just creates extra steps, while creating the false impression we might use the Cluster CA - which we dont want to do.
 ```
-TYPHA_CLIENT_CN=$(kubectl get deployment calico-typha -n calico-system -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="TYPHA_CLIENTCN") .value')
-openssl req -newkey rsa:4096 \
-           -keyout guest/generated/certs/calico-node.key \
-           -nodes \
-           -out guest/generated/certs/calico-node.csr \
-           -subj "/CN=$TYPHA_CLIENT_CN"
 
-kubectl get secret typha-certs -n calico-system -o json | jq -r '.data."tls.crt"' | base64 -d > guest/generated/certs/typha-tls.crt
-kubectl get secret typha-certs -n calico-system -o json | jq -r '.data."tls.key"' | base64 -d > guest/generated/certs/typha-tls.key
+kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.crt"' | base64 -d > guest/generated/certs/calico-node.crt
+kubectl get secret node-certs -n calico-system -o json | jq -r '.data."tls.key"' | base64 -d > guest/generated/certs/calico-node.key
 
-openssl x509 -req -in guest/generated/certs/calico-node.csr \
-                  -CA guest/generated/certs/typha-tls.crt \
-                  -CAkey guest/generated/certs/typha-tls.key \
-                  -CAcreateserial \
-                  -out guest/generated/certs/calico-node.crt \
-                  -days 365
-kubectl create secret generic -n kube-system calico-node-certs --from-file=guest/generated/certs/calico-node.key --from-file=guest/generated/certs/calico-node.crt
+# Check if these were created already? by the operator?
+kubectl create -f guest/manifests/static/calico-node-role.yaml
+kubectl create serviceaccount -n kube-system calico-node
+kubectl create clusterrolebinding calico-node --clusterrole=calico-node --serviceaccount=kube-system:calico-node
 
-APISERVER_IP=$(kubectl get endpoints -n default kubernetes -o json | jq -r '.subsets[0].addresses[0].ip')
-APISERVER_PORT=$(kubectl get endpoints -n default kubernetes -o json | jq -r '.subsets[0].addresses[0].port')
-
-# Theres no NodePort, so why would this work?
-# curl https://calico-typha:5473 -v --cacert guest/generated/certs/typha-tls.crt --resolve calico-typha:5473:$APISERVER_IP --cert guest/generated/certs/calico-node.crt --key guest/generated/certs/calico-node.key
-
+kubectl create -f guest/manifests/static/calico-node-daemonset.yaml
 ```
 
 ## Validate typha cert
@@ -1037,6 +1024,8 @@ On a Node:
 
 ## Errors:
 No SAN matches target name calico-typha
+
+
 Enable eBPf in place of IPTables
 
 https://docs.tigera.io/calico/latest/operations/ebpf/enabling-ebpf
