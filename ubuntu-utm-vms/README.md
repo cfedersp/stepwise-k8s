@@ -284,6 +284,8 @@ kubectl get lvmvolume -n openebs
 # Install Kafka
 Not clear how to use KRaft NodePools with our storage configuration - set default sc? Use ZK for now.
 ```
+kubectl create -f 'https://strimzi.io/install/latest?namespace=kafka' -n kafka
+
 kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
 ```
 
@@ -965,7 +967,15 @@ kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2
 #TODO: fix this so we dont have to patch the pool after the fact
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
 kubectl patch installation.operator.tigera.io default --type='json' -p='[{"op": "replace", "path": "/spec/calicoNetwork/ipPools/0/cidr", "value":"10.85.0.0/16"}]'
+
+# not sure if this is needed:
+kubectl create -f guest/manifests/static/bgpconfiguration.yaml 
+kubectl create -f guest/manifests/static/calico-node-status.yaml
+kubectl get caliconodestatus my-caliconodestatus-1 -o yaml
+
 ```
+Finally, we need to clear any existing static routes, so reboot each host.
+
 ## Validate progress so far
 This shows us 
 ```
@@ -978,7 +988,7 @@ kubectl get pods -n calico-system
 On a Node:
 This will show us that Calico is working properly within the cluster, but only partly working on the nodes:
 ```
-ip addr show
+ip route show
 ```
 default via 192.168.64.1 dev enp0s1 proto dhcp src 192.168.64.13 metric 100 
 10.85.35.0/26 via 192.168.64.18 dev enp0s1 proto 80 onlink 
@@ -1025,6 +1035,7 @@ Replace kube-proxy, then patch the operator to specify BPF.
 Existing connections will not be interrupted.
 New Connections will be routed to Linux's BPF
 ```
+./guest/utils/calico-ebpf-cm.yaml.sh | kubectl create -f -
 kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":{"non-calico": "true"}}}}}'
 kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"BPF"}}}'
 ```
@@ -1056,6 +1067,9 @@ https://docs.tigera.io/calico/latest/getting-started/kubernetes/hardway/install-
 Can vm-prep and guest/all-nodes/ be combined?
 Remove all references to ledgerbadger-vault.ca - its just the cluster root ca.
 
+BGP:
+https://www.jamieweb.net/blog/bgp-routing-security-part-1-bgp-peering-with-quagga/
+https://www.nongnu.org/quagga/docs/docs-multi/BGP.html
 
 Tools:
 https://github.com/cloudflare/cfssl/releases
@@ -1065,3 +1079,6 @@ you should not use the Cluster certificate authority for any purpose other than 
 https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster/
 DaemonSets run outside the cluster and cant receive incoming connections:
 https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/#alternatives-to-daemonset
+
+Calico enables BGP by default with VXLANCrossSubnet, which allows traffic to traverse subnets. 
+Calico does not use BGP for VXLAN overlays (across physical machines)
