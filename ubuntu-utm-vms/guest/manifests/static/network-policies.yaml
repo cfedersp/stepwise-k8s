@@ -1,0 +1,53 @@
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-cluster-internal-ingress-only
+spec:
+  order: 20
+  preDNAT: true
+  applyOnForward: true
+  ingress:
+    - action: Allow
+      source:
+        nets: [192.168.64.0/24, 192.168.1.0/24]
+    - action: Deny
+  selector: has(kubernetes-host)
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-outbound-external
+spec:
+  order: 10
+  egress:
+    - action: Allow
+  selector: has(kubernetes-host)
+---
+apiVersion: projectcalico.org/v3
+kind: HostEndpoint
+metadata:
+  name: worker6-enp0s1
+  labels:
+    kubernetes-host: ingress
+spec:
+  interfaceName: enp0s1
+  node: worker6
+  expectedIPs:
+    - 192.168.64.18
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-vault
+spec:
+  preDNAT: true
+  applyOnForward: true
+  order: 10
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: has(kubernetes-host)
+        ports: [31043]
+  selector: has(kubernetes-host)

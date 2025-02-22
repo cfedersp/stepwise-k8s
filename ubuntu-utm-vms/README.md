@@ -1031,7 +1031,8 @@ Enable eBPf in place of IPTables
 
 https://docs.tigera.io/calico/latest/operations/ebpf/enabling-ebpf
 More cpu-efficient than IPTables, and higher throughput.
-Replace kube-proxy, then patch the operator to specify BPF.
+Replace kube-proxy by updating the node-selector so it matches no nodes. This will destroy all existing kube-proxy pods.
+then patch the operator to specify BPF.
 Existing connections will not be interrupted.
 New Connections will be routed to Linux's BPF
 ```
@@ -1039,6 +1040,29 @@ New Connections will be routed to Linux's BPF
 kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":{"non-calico": "true"}}}}}'
 kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"BPF"}}}'
 ```
+Host:
+Visit in Browser:
+VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
+VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT" 
+echo $VAULT_ADDR 
+https://ledgerbadger-vault.default.svc.cluster.local:31043/ui/
+
+Oops, it doesn't work, revert eBPF for now:
+```
+kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"Iptables"}}}'
+kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":null}}}}'
+nodeSelectorTerms:
+        - matchExpressions:
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values:
+
+"nodeSelectorTerms":[{"matchExpressions":[{"key":]}]
+```
+
+## Enable ingress via NodePort
+https://medium.com/expedia-group-tech/network-policies-with-calico-for-kubernetes-networking-875c0ebbcfb3
+https://github.com/kubernetes-client/python?tab=readme-ov-file
 
 
 Full CalicoCtl Command Set:
@@ -1059,6 +1083,9 @@ https://isovalent.com/static/2bc73e7bf249611546428cc2619c8fe4/56f57/Service-Mesh
 https://docs.tigera.io/calico/latest/about/kubernetes-training/about-networking
 https://medium.com/@NTTICT/vxlan-explained-930cc825a51
 https://kubernetes.io/docs/reference/access-authn-authz/authentication/
+Calico Arch:
+https://docs.tigera.io/calico/latest/reference/architecture/overview
+
 Role of Calico CSI pods:
 https://github.com/projectcalico/calico/issues/7831
 Have apps Create and use self-signed certs without the Cluster CA:
@@ -1082,3 +1109,18 @@ https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/#alternative
 
 Calico enables BGP by default with VXLANCrossSubnet, which allows traffic to traverse subnets. 
 Calico does not use BGP for VXLAN overlays (across physical machines)
+
+# Default Connectivity:
+Failsafe rules allow the minimum connectivity required for kubernetes and kubectl to work
+https://docs.tigera.io/calico/latest/network-policy/services/kubernetes-node-ports
+# Policy for services: -done
+https://docs.tigera.io/calico/latest/network-policy/services/kubernetes-node-ports
+# Policy for VMs
+
+# Calico Validation/Use Cases:
+Kafka reaches health state
+Ingress from host
+
+
+# find a pod on a particular node
+kubectl get pod -n calico-system -o json | jq -r '.items[] | select(.metadata.labels."app.kubernetes.io/name"=="calico-node") | select(.status.hostIP=="192.168.64.10") | .metadata.name'
