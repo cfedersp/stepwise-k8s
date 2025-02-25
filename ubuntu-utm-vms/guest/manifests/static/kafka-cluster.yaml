@@ -26,19 +26,19 @@ spec:
       type: jbod
       volumes:
       - id: 0
-        class: openebs-lvmpv
+        class: openebs-lvm
         type: persistent-claim
         size: 10Gi
         deleteClaim: false
       - id: 1
-        class: openebs-lvmpv
+        class: openebs-lvm
         type: persistent-claim
         size: 10Gi
         deleteClaim: false
   zookeeper:
     replicas: 3
     storage:
-      class: openebs-lvmpv
+      class: openebs-lvm
       type: persistent-claim
       size: 10Gi
       deleteClaim: false

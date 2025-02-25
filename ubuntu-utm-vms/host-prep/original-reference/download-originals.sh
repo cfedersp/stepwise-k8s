@@ -59,3 +59,5 @@ CO_FILE='guest/manifests/static/kafka-cluster-orig.yaml'
 curl -L -o $CO_FILE 'https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/refs/tags/0.45.0/examples/kafka/kafka-jbod.yaml'
 
 echo "Now edit $CO_FILE, adding .spec.storage.volumes.class under KafkaNodePool, and update the size"
+
+curl -L -o guest/manifests/static/calico-custom-resources.yaml 'https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml'

@@ -130,6 +130,7 @@ This was customized and checked in as a static manifest.
 curl -sLo values.yaml https://raw.githubusercontent.com/minio/operator/master/helm/tenant/values.yaml
 # Prep Host:
 ```
+mkdir -p guest/generated/certs/; rm -rf guest/generated/certs/*
 mkdir -p ~/.kube/
 export HELM_INSTALL_DIR=$HOME/opt/utils
 mkdir -p $HELM_INSTALL_DIR
@@ -177,6 +178,7 @@ Shutdown the VM.
 
 # Setup Master
 Clone your base VM, give it a random mac, add 100G NVMe and a new name.  
+MASTER MUST HAVE AT LEAST 2 CPUS!
 Wait a couple minutes for UTM to finish copying.  
 Start the VM.  
 Change hostname:  
@@ -197,10 +199,12 @@ Share join-config and kubeconfig with host:
 ```
 sudo /usr/share/host/guest/master/start-master.sh  
 sudo /usr/share/host/guest/master/install-config.sh  
+sudo rm -rf /usr/share/host/guest/generated
 sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
 sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
 sudo install -m 664 /etc/kubernetes/pki/ca.crt /usr/share/host/guest/generated/ 
 /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
+sudo cp /etc/kubernetes/pki/ca.crt /usr/share/host/guest/generated/certs/
 ```
 
 # Setup Workers:
@@ -219,18 +223,18 @@ Create Volume Group for application data:
 ```
 sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
 ```
-Configure CNI:
+Configure static IPAM CNI: (Skip if existing nodes already have Calico - CalicoNode will install the CNI config and binaries for us)
 ```
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
 sudo mkdir -p /etc/cni/net.d
 sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/  
 ```
+
 Join the Kubernetes Cluster, make the admin keys available for CLI use, show cluster nodes.
 ```
 /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated  
 sudo kubeadm join --config ./join-config.json  
-mkdir ~/.kube  
-cp /usr/share/host/guest/generated/admin.conf ~/.kube/config  
+mkdir -p ~/.kube; cp /usr/share/host/guest/generated/admin.conf ~/.kube/config  
 kubectl get nodes  
 ```
 
@@ -242,7 +246,7 @@ chmod 775 cni-routes.sh
 sudo ./cni-routes.sh
 ```
 VMs wont be able to reach services, but pods will.
-# Pending - persist routes 
+# DONT DO THIS - persist routes 
 https://linuxconfig.org/how-to-add-static-route-with-netplan-on-ubuntu-20-04-focal-fossa-linux
 sudo cat /etc/netplan/50-cloud-init.yaml
 
@@ -253,6 +257,19 @@ From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms
 cp guest/generated/admin.conf ~/.kube/config
 kubectl get nodes
 ```
+
+# Validate Host Ingress
+On Host:
+Add this entry to your /etc/hosts
+192.168.64.20 ledgerbadger-validation.default.svc.cluster.local
+```
+kubectl create deployment multitool --image=wbitt/network-multitool
+kubectl create -f vm-prep/validation/ingress-node-port.yaml
+MULTITOOL_PORT=$(kubectl get svc ledgerbadger-validation -o json | jq -r '.spec.ports[0].nodePort')
+echo http://ledgerbadger-validation.default.svc.cluster.local:$MULTITOOL_PORT
+curl http://ledgerbadger-validation.default.svc.cluster.local:$MULTITOOL_PORT
+```
+
 # Install a Storage Controller
 Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
 Install the chart, but give values so loki doesn't use such a large disk.  
@@ -270,12 +287,6 @@ kubectl get pods -n openebs
 openebs-hostpath
 - mounts a dir on the VM into the container
 - has WaitForFirstConsumer VolumeBindingMode: The Volume controller will wait until the pod scheduler updates a PVC annotation indicating which node
-openebs-lvmpv: (bad - I created this without VolumeBindingMode, and it defauled to Immediate)
-- provisions a Logical Volume, formats it, and mounts it into the container
-- has Immediate VolumeBindingMode
-- How is this assigned to a node?
-
-For pod scheduling to work, the SC must be WaitForFirstConsumer? explain
 
 # Inspect OpenEBS
 kubectl get ds openebs-lvm-localpv-node -n openebs -o yaml
@@ -284,6 +295,7 @@ kubectl get lvmvolume -n openebs
 # Install Kafka
 Not clear how to use KRaft NodePools with our storage configuration - set default sc? Use ZK for now.
 ```
+kubectl create ns kafka
 kubectl create -f 'https://strimzi.io/install/latest?namespace=kafka' -n kafka
 
 kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
@@ -313,6 +325,9 @@ kubectl exec -it my-cluster-kafka-0 -n kafka -- /bin/bash
 ## Delete Kafka
 kubectl get kafka my-cluster -n kafka
 kubectl delete kafka my-cluster -n kafka
+kubectl delete pvc data-my-cluster-zookeeper-0 -n kafka
+kubectl delete pvc data-my-cluster-zookeeper-1 -n kafka
+kubectl delete pvc data-my-cluster-zookeeper-2s -n kafka
 
 # Integrate HashiCorp Vault for KMS
 
@@ -327,43 +342,67 @@ https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-minikube-t
 https://secrets-store-csi-driver.sigs.k8s.io/getting-started/installation.html
 https://developer.hashicorp.com/vault/tutorials/kubernetes/vault-secrets-operator
 
-## Generate cert and have kubernetes sign it
-https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-minikube-tls#create-the-certificate
-A webserver's TLS cert does not have to be signed by the cluster CA, but vault will 
+
+
+# Create a personal CA for development
+https://stackoverflow.com/questions/21297139/how-do-you-sign-a-certificate-signing-request-with-your-certification-authority
 ```
-source applications/vault/default-ns-env
-export WORKDIR=applications/generated/certs
-mkdir -p $WORKDIR/manifests
-openssl genrsa -out ${WORKDIR}/vault.key 2048
-source applications/default-ns-env VAULT
-./applications/create-csr-conf.sh vault > ${WORKDIR}/vault-csr.conf
-openssl req -new -key ${WORKDIR}/vault.key -out ${WORKDIR}/vault.csr -config ${WORKDIR}/vault-csr.conf
-./applications/gen-csr.sh ledgerbadger-vault.svc ${WORKDIR}/vault.csr > ${WORKDIR}/manifests/vault-csr.yaml
-kubectl create -f ${WORKDIR}/manifests/vault-csr.yaml
+export MYCERTSHOME=~/Library/Mobile\ Documents/com~apple~CloudDocs/Security
+openssl genrsa -des3 -out $MYCERTSHOME/macdevelopment-demo.key 2048
+
+./applications/create-root-ca-config.sh "Charlie Federspiel" "charles.federspiel@gmail.com" > /tmp/personal-root.config
+
+openssl req -x509 -sha256 -key $MYCERTSHOME/macdevelopment-demo.key -new -out $MYCERTSHOME/macdevelopment-demo.crt -config /tmp/personal-root.config
+
+# Inspect it:
+openssl x509 -text -noout -in $MYCERTSHOME/macdevelopment-demo.crt
+
+cp $MYCERTSHOME/macdevelopment-demo.* $CERTDIR/
+```
+
+## Generate a Vault Cert signed by your personal CA.
+The vault cert must be signed by kubernetes because Vault will:
+sync its secrets with Kubernetes
+create volumes containing its secrets
+
+Improve this further:
+https://serverfault.com/questions/1156946/how-to-properly-create-ca-certificate-and-sign-the-ssl-tls-cert-to-use-in-apache
+```
+openssl genrsa -out ${CERTDIR}/vault.key 2048
+source applications/default-ns-env vault
+./applications/create-k8s-csr-conf.sh vault > ${CERTDIR}/vault-csr.conf
+./applications/gen-serving-csr.sh ledgerbadger-vault.svc ${CERTDIR}/vault.csr > ${CERTDIR}/manifests/vault-csr.yaml
+kubectl create -f ${CERTDIR}/manifests/vault-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-vault.svc
-kubectl get csr ledgerbadger-vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/vault.crt
-kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-vault.ca
-openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-vault.ca
+kubectl get csr ledgerbadger-vault.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${CERTDIR}/vault.crt
+
+# Inspect it:
+openssl x509 -text -noout -in $CERTDIR/vault.crt | grep DNS
+kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${CERTDIR}/ledgerbadger-vault.ca
+openssl verify -verbose -CAfile ${CERTDIR}/ledgerbadger-vault.ca $CERTDIR/vault.crt
+
+export VAULT_K8S_NAMESPACE=default
 kubectl create secret generic vault-ca \
    -n $VAULT_K8S_NAMESPACE \
-   --from-file=vault.ca=${WORKDIR}/ledgerbadger-vault.ca
+   --from-file=ledgerbadger-vault.ca=$CERTDIR/ledgerbadger-vault.ca
 
 kubectl create secret generic vault-ha-tls \
    -n $VAULT_K8S_NAMESPACE \
-   --from-file=vault.key=${WORKDIR}/vault.key \
-   --from-file=vault.crt=${WORKDIR}/vault.crt
-
+   --from-file=vault.key=${CERTDIR}/vault.key \
+   --from-file=vault.crt=${CERTDIR}/vault.crt
 ```
 
-## NONONO: Install Secrets CSI Driver 
-This allows Vault Secrets to be mounted as Volumes ?when a SecretProviderClass is created?
-Either install this storage driver or enable the Agent Injector w/ a Service Account bound to the appropriate role - not both.
+## Add your CA to MacOS KeyChain
 ```
-helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
-helm install csi-secrets-store secrets-store-csi-driver/secrets-store-csi-driver --namespace kube-system
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/macdevelopment-demo.crt
 ```
-## NONONO: Create a SecretProviderClass 
+
+## Pod stuck in ContainerCreating:
+If you see this error:
+Failed to create pod sandbox: rpc error: code = Unknown desc = failed to create pod network sandbox k8s_vault-csi-provider-5xdr6_default_5012674c-5cc9-40e1-82ac-270a499f8c59_0(978e800ae34d895cbd39a0045561d6a4638e447a6818f754fb3032334c375231): error adding pod default_vault-csi-provider-5xdr6 to CNI network "k8s-pod-network": plugin type="calico" failed (add): error getting ClusterInformation: connection is unauthorized: Unauthorized
+
+Either wait or restart all calico-node daemonset pods. They are in the calico-system namespace.
 
 ## Install Vault Chart w/o the "Agent Injector" admission controller
 https://developer.hashicorp.com/vault/docs/platform/k8s/injector
@@ -371,9 +410,12 @@ Note, for Kubernetes 1.24, serviceAccount.createSecret should be false
 ```
 sudo rm applications/generated/cluster-keys.json
 helm repo add hashicorp https://helm.releases.hashicorp.com
+kubectl apply -f guest/manifests/static/vault-sa.yaml
+
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
 
 export INITIAL_VAULT_NODE="vault-0"
+kubectl exec $INITIAL_VAULT_NODE -- ls /etc/ssl/certs/
 kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 
 sudo chown root applications/generated/cluster-keys.json
@@ -382,14 +424,14 @@ VAULT_UNSEAL_KEY=$(sudo jq -r ".unseal_keys_b64[]" applications/generated/cluste
 kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
-kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/ledgerbadger-vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
 kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 
-kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/ledgerbadger-vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
 kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
-
+export VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
 vault status -address="$VAULT_ADDR"
 ```
 
@@ -428,7 +470,10 @@ In System Settings, Privacy & Security -> Network, allow Chrome.
 ```
 kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
-VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
+VAULT_ADDR="https://vault.default.svc.cluster.local:$VAULT_PORT"
+vault status -address="$VAULT_ADDR" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" 
+# TODO: Remove old k8s cert from KeyChain
+# TODO: Then, Add new k8s cert to KeyChain
 vault login -address="$VAULT_ADDR" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
 
 echo $VAULT_ADDR/ui
@@ -514,8 +559,6 @@ Shouldn't need these because sa is configured for Vault:
 vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true" token_reviewer_jwt="$TOKEN_REVIEW_JWT"
 
 vault read -address "$VAULT_ADDR" auth/kubernetes/config
-
-kubectl apply -f guest/manifests/static/vault-sa.yaml
 ```
 
 ## Pending: 
@@ -906,7 +949,7 @@ Explore: Would prefer ipam.subnet be the VM CIDR?
 Calico CNI plugin runs outside the cluster, so it needs a kubeconfig. A service account will not work.
 Host:
 ```
-mkdir -p guest/generated/certs/
+mkdir -p guest/generated/users/
 openssl req -newkey rsa:4096 \
            -keyout guest/generated/certs/calico-cni.key \
            -nodes \
@@ -918,7 +961,6 @@ kubectl get csr
 kubectl certificate approve calico-user
 kubectl get csr calico-user -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out guest/generated/certs/calico-user.crt
 
-mkdir -p guest/generated/users/
 APISERVER=$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')
 kubectl config set-cluster kubernetes \
     --certificate-authority=guest/generated/certs/ca.crt \
@@ -954,19 +996,26 @@ chmod +x kubectl-calico
 kubectl calico -h
 
 ```
+Full CalicoCtl Command Set:
+Includes:
+calicoctl nodes
+calicoctl ipam
+calicoctl convert
+calicoctl version
 
-Each Node:
-```
-sudo /usr/share/host/guest/all-nodes/install-calico-cni.sh
-```
+
 Host:
 ```
 kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 # For ref: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
 #TODO: fix this so we dont have to patch the pool after the fact
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/custom-resources.yaml
-kubectl patch installation.operator.tigera.io default --type='json' -p='[{"op": "replace", "path": "/spec/calicoNetwork/ipPools/0/cidr", "value":"10.85.0.0/16"}]'
+kubectl create -f guest/manifests/static/calico-custom-resources.yaml
+```
+Each Node:(NOT NEEDED! Calico-node does this for us!)
+```
+sudo /usr/share/host/vm-prep/install-calico-cni.sh
+```
 
 # not sure if this is needed:
 kubectl create -f guest/manifests/static/bgpconfiguration.yaml 
@@ -989,6 +1038,8 @@ On a Node:
 This will show us that Calico is working properly within the cluster, but only partly working on the nodes:
 ```
 ip route show
+kubectl taint nodes master node-role.kubernetes.io/control-plane:NoSchedule
+
 ```
 default via 192.168.64.1 dev enp0s1 proto dhcp src 192.168.64.13 metric 100 
 10.85.35.0/26 via 192.168.64.18 dev enp0s1 proto 80 onlink 
@@ -1019,6 +1070,13 @@ openssl x509 -noout -text -in guest/generated/certs/calico-node.crt | grep DNS |
 kubectl get deployment calico-typha -n calico-system -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="TYPHA_CLIENTCN") .value'
 
 /usr/share/host/vm-prep/validation/typha-cert.sh
+```
+## Enable ingress via NodePort
+https://medium.com/expedia-group-tech/network-policies-with-calico-for-kubernetes-networking-875c0ebbcfb3
+https://github.com/kubernetes-client/python?tab=readme-ov-file
+
+```
+kubectl create -f guest/manifests/static/network-policies.yaml
 ```
 
 ## Next:
@@ -1060,18 +1118,26 @@ nodeSelectorTerms:
 "nodeSelectorTerms":[{"matchExpressions":[{"key":]}]
 ```
 
-## Enable ingress via NodePort
-https://medium.com/expedia-group-tech/network-policies-with-calico-for-kubernetes-networking-875c0ebbcfb3
-https://github.com/kubernetes-client/python?tab=readme-ov-file
 
 
-Full CalicoCtl Command Set:
-Includes:
-calicoctl nodes
-calicoctl ipam
-calicoctl convert
-calicoctl version
 
+# Pending: Remove Calico
+https://github.com/projectcalico/calico/issues/7816
+Each Node:
+```
+sudo remove-calico-cni.sh
+..after restart..
+sudo ./cni-routes.sh
+```
+Host:
+```
+kubectl delete installation default
+kubectl delete -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/tigera-operator.yaml
+```
+## Master node:
+```
+sudo /usr/share/host/cleanup/patch-nodes.sh
+```
 
 ## Calico Tutorials:
 https://docs.tigera.io/calico/latest/operations/install-apiserver

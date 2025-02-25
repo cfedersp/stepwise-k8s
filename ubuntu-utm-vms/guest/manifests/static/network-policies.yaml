@@ -34,12 +34,12 @@ spec:
   interfaceName: enp0s1
   node: worker6
   expectedIPs:
-    - 192.168.64.18
+    - 192.168.64.21
 ---
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
-  name: allow-vault
+  name: allow-multitool
 spec:
   preDNAT: true
   applyOnForward: true
@@ -49,5 +49,5 @@ spec:
       protocol: TCP
       destination:
         selector: has(kubernetes-host)
-        ports: [31043]
+        ports: [32349]
   selector: has(kubernetes-host)
