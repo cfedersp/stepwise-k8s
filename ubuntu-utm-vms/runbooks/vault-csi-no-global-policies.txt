@@ -1,0 +1,55 @@
+export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
+VAULT_PORT=$(kubectl get svc vault -o json | jq -r '.spec.ports[0].port')
+VAULT_SVC="vault"
+# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
+VAULT_ADDR="https://$VAULT_SVC:$VAULT_PORT"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -address="$VAULT_ADDR" -ca-cert="/vault/userconfig/vault-ha-tls/kubernetes.ca" $CLUSTER_ROOT_TOKEN
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login $CLUSTER_ROOT_TOKEN
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers
+
+
+## Vault Validation: Write a secret that becomes a mountable volume
+https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-secret-store-driver
+
+Create a secret.
+Then create a Vault kubernetes authentication role called 'database' that grants the 'my-app-sa' service account with policy 'internal-app'
+Then create a service account for use by a pod that mounts a volume provided by the Vault CSI provider.
+The service account does not have a Kubernetes role, but a Vault kubernetes role.
+```
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault secrets enable -path=secret kv-v2 
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv put secret/db-pass password="db-secret-password"
+
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault auth enable kubernetes
+
+KUBERNETES_PORT=$(kubectl get svc kubernetes -o json | jq -r '.spec.ports[0].port')
+KUBERNETES_ENDPOINT="https://kubernetes.default.svc:$KUBERNETES_PORT"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault write auth/kubernetes/config kubernetes_host="$KUBERNETES_ENDPOINT"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault read auth/kubernetes/config
+
+kubectl create serviceaccount my-apps-sa
+
+kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+vault policy write -address "$VAULT_ADDR" internal-app - <<EOF
+path "secret/data/db-pass" {
+  capabilities = ["read"]
+}
+EOF
+
+vault policy read internal-app 
+
+vault write auth/kubernetes/role/database \
+    bound_service_account_names=my-apps-sa \
+    bound_service_account_namespaces=default \
+    policies=internal-app \
+    ttl=20m 
+
+# Check root cert is in place
+ls /vault/userconfig/vault-ha-tls/
+vault list auth/kubernetes/role
+exit
+
+kubectl apply -f guest/manifests/static/vault-database-spc.yaml
+
+kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml 
+kubectl get pods
+kubectl describe pod webapp

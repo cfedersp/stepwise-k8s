@@ -169,11 +169,12 @@ ssh to the ip of your VM  using your favorite terminal.
 Clear the contents of etc/machine-id but keep the file  
 paste into your new terminal  
 ```
+sudo timedatectl set-timezone America/Los_Angeles
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
 ```
-Clear the contents of etc/machine-id **but keep the file**
+Clear the contents of /etc/machine-id **but keep the file**
 Shutdown the VM.
 
 # Setup Master
@@ -356,21 +357,30 @@ openssl req -x509 -sha256 -key $MYCERTSHOME/macdevelopment-demo.key -new -out $M
 
 # Inspect it:
 openssl x509 -text -noout -in $MYCERTSHOME/macdevelopment-demo.crt
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/macdevelopment-demo.crt
 
+# what do we use this for?
 cp $MYCERTSHOME/macdevelopment-demo.* $CERTDIR/
 ```
 
-## Generate a Vault Cert signed by your personal CA.
-The vault cert must be signed by kubernetes because Vault will:
-sync its secrets with Kubernetes
-create volumes containing its secrets
+## Generate a custom Vault Cert 
+The Vault cert must have the SANs we want.
+And it must be signed by kubernetes because Vault will:
+ - verify requests from service accounts against kubernetes api server.
+ - sync its secrets with Kubernetes
+ - create volumes containing its secrets
+Therefore, the Vault listener tls_client_ca_file is set to kubernetes.ca. 
+Also, the SecretProviderClass must have the path to the kubernetes root ca.
+Also, the kubernetes config in the vault auth knows to use the kubernetes root ca, so we leave it blank.
 
 Improve this further:
 https://serverfault.com/questions/1156946/how-to-properly-create-ca-certificate-and-sign-the-ssl-tls-cert-to-use-in-apache
 ```
 openssl genrsa -out ${CERTDIR}/vault.key 2048
-source applications/default-ns-env vault
+source applications/default-ns-env vault ledgerbadger
 ./applications/create-k8s-csr-conf.sh vault > ${CERTDIR}/vault-csr.conf
+openssl req -new -key ${CERTDIR}/vault.key -out ${CERTDIR}/vault.csr -config ${CERTDIR}/vault-csr.conf
+
 ./applications/gen-serving-csr.sh ledgerbadger-vault.svc ${CERTDIR}/vault.csr > ${CERTDIR}/manifests/vault-csr.yaml
 kubectl create -f ${CERTDIR}/manifests/vault-csr.yaml
 kubectl get csr
@@ -379,23 +389,29 @@ kubectl get csr ledgerbadger-vault.svc -o jsonpath='{.status.certificate}' | ope
 
 # Inspect it:
 openssl x509 -text -noout -in $CERTDIR/vault.crt | grep DNS
-kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${CERTDIR}/ledgerbadger-vault.ca
-openssl verify -verbose -CAfile ${CERTDIR}/ledgerbadger-vault.ca $CERTDIR/vault.crt
+kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${CERTDIR}/kubernetes.ca
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca $CERTDIR/vault.crt
+kubectl get secret vault-ha-tls -o json | jq -r '.data."vault.crt"' | base64 -d > $CERTDIR/vault-from-secret.crt
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca $CERTDIR/vault-from-secret.crt 
+
+openssl rsa -modulus -noout -in $CERTDIR/vault.key | openssl md5
+openssl x509 -modulus -noout -in $CERTDIR/vault.crt | openssl md5
 
 export VAULT_K8S_NAMESPACE=default
 kubectl create secret generic vault-ca \
    -n $VAULT_K8S_NAMESPACE \
-   --from-file=ledgerbadger-vault.ca=$CERTDIR/ledgerbadger-vault.ca
+   --from-file=kubernetes.ca=$CERTDIR/kubernetes.ca
 
 kubectl create secret generic vault-ha-tls \
    -n $VAULT_K8S_NAMESPACE \
    --from-file=vault.key=${CERTDIR}/vault.key \
-   --from-file=vault.crt=${CERTDIR}/vault.crt
+   --from-file=vault.crt=${CERTDIR}/vault.crt \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca
 ```
 
 ## Add your CA to MacOS KeyChain
 ```
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/macdevelopment-demo.crt
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/kubernetes.crt
 ```
 
 ## Pod stuck in ContainerCreating:
@@ -412,10 +428,17 @@ sudo rm applications/generated/cluster-keys.json
 helm repo add hashicorp https://helm.releases.hashicorp.com
 kubectl apply -f guest/manifests/static/vault-sa.yaml
 
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm install vault-csi secrets-store-csi-driver/secrets-store-csi-driver \
+    --set syncSecret.enabled=true
+## Vault chart states: Requires installing the secrets-store-csi-driver separately 
+
 helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
 
 export INITIAL_VAULT_NODE="vault-0"
 kubectl exec $INITIAL_VAULT_NODE -- ls /etc/ssl/certs/
+kubectl exec $INITIAL_VAULT_NODE -- ls /vault/userconfig/vault-ha-tls/
+
 kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
 
 sudo chown root applications/generated/cluster-keys.json
@@ -424,14 +447,15 @@ VAULT_UNSEAL_KEY=$(sudo jq -r ".unseal_keys_b64[]" applications/generated/cluste
 kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
-kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/ledgerbadger-vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
 kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 
-kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/ledgerbadger-vault.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
 
 kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
-export VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
+VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
+VAULT_ADDR="https://ledgerbadger-vault.default.svc.cluster.local:$VAULT_PORT"
 vault status -address="$VAULT_ADDR"
 ```
 
@@ -441,8 +465,11 @@ retry_join
 ## Inspect HA Vault
 An instance wont appear as a peer until it has been unsealed.
 ```
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- ls -l /vault/data/core
+
 export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login $CLUSTER_ROOT_TOKEN
+vault login -address="$VAULT_ADDR" $CLUSTER_ROOT_TOKEN
+# kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login $CLUSTER_ROOT_TOKEN
 
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers
 kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  -address "https://vault-2.vault-internal.default.svc.cluster.local:8200"
@@ -452,12 +479,20 @@ kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault operator raft list-peers  
 
 
 kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
-vault secrets enable -path=secret - kv-v2 
+vault secrets enable -path=secret kv-v2 
 vault kv put secret/tls/apitest username="apiuser" password="supersecret"
-vault kv get secret/tls/apitest
+vault kv get -address="$VAULT_ADDR" secret/tls/apitest
 ```
+800-422-8811
+4131178
+416416
+opaque: 421747
+belt, extended barr
+## Pending: Browser access to your cluster (network policies may break pod traffic - need testing with latest ingress)
+Without calico, invoking vault just requires NodePort, /etc/hosts entry and VAULT_ADDR to be set.
+With Calico, the defaults prevent ingress, but allow vault to reach a healthy state. Failed heartbeats and failed leader-elections do not cause an unhealthy state.
+We require the above and GlobalNetworkPolicies that allow ingress AND pod-to-pod communication
 
-## Pending: Browser access to your cluster
 https://www.reddit.com/r/MacOS/comments/1fjopdm/something_has_changed_in_sequoia_in_regards_to/
 https://kenmoini.com/post/2024/02/adding-trusted-root-certificate-authority/#adding-to-mac-os-x---cli
 Install the root CA, having a SAN you want to use to access your local cluster.
@@ -468,19 +503,31 @@ May need turn off Safe Browsing?
 In Chrome Settings, Disable Secure DNS: chrome://settings/security
 In System Settings, Privacy & Security -> Network, allow Chrome.
 ```
+kubectl apply -f guest/manifests/static/network-policies.yaml
 kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
-VAULT_ADDR="https://vault.default.svc.cluster.local:$VAULT_PORT"
-vault status -address="$VAULT_ADDR" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" 
+VAULT_FQDN_IN_HOSTS="ledgerbadger-vault.default.svc.cluster.local"
+# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
+VAULT_ADDR="https://$VAULT_FQDN_IN_HOSTS:$VAULT_PORT"
+
+vault status -address="$VAULT_ADDR" -ca-cert="$CERTDIR/ledgerbadger-vault.ca" 
 # TODO: Remove old k8s cert from KeyChain
 # TODO: Then, Add new k8s cert to KeyChain
-vault login -address="$VAULT_ADDR" -ca-cert="applications/generated/certs/ledgerbadger-vault.ca" $CLUSTER_ROOT_TOKEN
+export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
+VAULT_PORT=$(kubectl get svc vault -o json | jq -r '.spec.ports[0].port')
+VAULT_SVC="vault"
+# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
+VAULT_ADDR="https://$VAULT_SVC:$VAULT_PORT"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -address="$VAULT_ADDR" -ca-cert="/vault/userconfig/vault-ha-tls//kubernetes.ca" $CLUSTER_ROOT_TOKEN
+
+
+vault login -address="$VAULT_ADDR" -ca-cert="$CERTDIR/kubernetes.ca" $CLUSTER_ROOT_TOKEN
 
 echo $VAULT_ADDR/ui
 curl -L $VAULT_ADDR/ui
-vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "applications/generated/certs/ledgerbadger-vault.ca"
+vault operator raft list-peers  -address "$VAULT_ADDR" -ca-cert "$CERTDIR/kubernetes.ca"
 vault operator raft list-peers  -address "$VAULT_ADDR" 
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain applications/generated/certs/ledgerbadger-vault.ca
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/kubernetes.ca
 vault operator raft list-peers  -address "$VAULT_ADDR" 
 
 vault auth enable -address "$VAULT_ADDR" userpass 
@@ -488,7 +535,7 @@ vault write -address "$VAULT_ADDR" auth/userpass/users/charlie policies=default 
 
 ```
 
-## Write a secret that becomes a mountable volume
+## Vault Validation: Write a secret that becomes a mountable volume
 https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-secret-store-driver
 
 Create a secret.
@@ -496,33 +543,108 @@ Then create a Vault kubernetes authentication role called 'database' that grants
 Then create a service account for use by a pod that mounts a volume provided by the Vault CSI provider.
 The service account does not have a Kubernetes role, but a Vault kubernetes role.
 ```
-kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+# kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+# vault secrets enable -address "$VAULT_ADDR" -version=1 kv
+# vault kv put -address "$VAULT_ADDR" kv/db-pass password="db-secret-password"
+vault secrets enable -path=secret kv-v2 
 vault kv put -address "$VAULT_ADDR" secret/db-pass password="db-secret-password"
-vault auth enable -address "$VAULT_ADDR" kubernetes
-export KUBERNETES_PORT_443_TCP_ADDR="192.168.64.7"
-vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+vault kv get -address "$VAULT_ADDR" secret/db-pass
+vault auth enable -address "$VAULT_ADDR" kubernetes 
+vault auth list -address "$VAULT_ADDR" 
+# KUBERNETES_HOST=$(kubectl config view -o json | jq -r '.clusters[0].cluster.server')
+# KUBERNETES_HOST=$(kubectl get svc kubernetes -o json | jq -r '.spec.clusterIP')
+KUBERNETES_PORT=$(kubectl get svc kubernetes -o json | jq -r '.spec.ports[0].port')
+KUBERNETES_ENDPOINT="kubernetes:$KUBERNETES_PORT"
+vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="$KUBERNETES_ENDPOINT"
+vault read -address "$VAULT_ADDR" auth/kubernetes/config
+kubectl create serviceaccount my-apps-sa
 
-vault secrets enable -address "$VAULT_ADDR" -version=1 kv
-vault policy write  -address "$VAULT_ADDR" internal-app - <<EOF
+kubectl exec -n $VAULT_K8S_NAMESPACE -it vault-0 -- /bin/sh
+vault policy write internal-app - <<EOF
 path "secret/data/db-pass" {
   capabilities = ["read"]
 }
 EOF
 
-vault write -address "https://vault-0.vault-internal.default.svc.cluster.local:8200" \
-auth/kubernetes/role/database \
+vault policy write -address "$VAULT_ADDR" internal-app - <<EOF
+path "secret/data/db-pass" {
+  capabilities = ["read"]
+}
+EOF
+
+
+
+# address isn't needed, perhaps because I logged in?
+vault write -address "$VAULT_ADDR" auth/kubernetes/role/database \
     bound_service_account_names=my-apps-sa \
     bound_service_account_namespaces=default \
     policies=internal-app \
     ttl=20m 
 
+# Check root cert is in place
+kubectl exec vault-csi-provider-g2886 -- ls /vault/tls
 vault list -address "$VAULT_ADDR" auth/kubernetes/role
 kubectl apply -f guest/manifests/static/vault-database-spc.yaml
 
-kubectl create serviceaccount my-apps-sa
 kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml 
+kubectl describe pod webapp
 kubectl exec webapp -- cat /mnt/secrets-store/db-password
 ```
+pod asks CSI Provider create a volume
+kubernetes tells the provider.
+the provider calls vault with a service account that vault should 
+
+## issue;
+vault-csi-provider-zg6c5 tries to call vault svc:
+failed to login: read tcp 10.85.182.27:44792->10.102.50.114:8200: read: connection reset by peer"
+kubectl get pod vault-csi-provider-zg6c5 -o json | jq -r '.status.podIP'
+10.85.182.27
+kubectl get svc vault -o json | jq -r '.spec.clusterIP'
+10.102.50.114
+kubectl exec vault-csi-provider-zg6c5 -- ls /vault/tls
+maybe the vault tls secret should also have the ca?
+vault logs:
+http: TLS handshake error from 10.85.182.27:41499: EOF
+http: TLS handshake error from 192.168.64.21:33121: EOF
+vault-csi-provider logs:
+server: Finished unary gRPC call: grpc.method=/v1alpha1.CSIDriverProvider/Mount grpc.time=6.260363ms grpc.code=Unknown err="error making mount request: couldn't read secret \"db-password\": failed to login: read tcp 10.85.182.29:40512->10.98.65.100:8200: read: connection reset by peer"
+
+vault logs:
+http: TLS handshake error from 10.85.199.163:55856: remote error: tls: bad certificate
+csi-provider logs:
+Finished unary gRPC call: grpc.method=/v1alpha1.CSIDriverProvider/Mount grpc.time=6.912987ms grpc.code=Unknown err="error making mount request: couldn't read secret \"db-password\": failed to login: Post \"https://vault.default:8200/v1/auth/kubernetes/login\": tls: failed to verify certificate: x509: certificate signed by unknown authority"
+kubectl exec vault-csi-provider-g2886 -- ls /vault/tls
+
+kubectl exec vault-csi-provider-g2886 -- ls /etc/ssl/certs/
+
+cert is fixed.
+new error in webapp:
+Warning  FailedMount  30s (x7 over 62s)  kubelet            MountVolume.SetUp failed for volume "secrets-store-inline" : rpc error: code = Unknown desc = failed to mount secrets store objects for pod default/webapp, err: rpc error: code = Unknown desc = error making mount request: couldn't read secret "db-password": failed to login: Error making API request.
+
+URL: POST https://vault.default:8200/v1/auth/kubernetes/login
+Code: 403. Errors:
+
+* permission denied
+csi-provider logs:
+* invalid expiration time (exp) claim: token is expired
+
+timezone is fixed
+same error in webapp, new error in csi-provider logs:
+ error making mount request: couldn't read secret "db-password": failed to login: Error making API request.
+  | 
+  | URL: POST https://vault.default:8200/v1/auth/kubernetes/login
+  | Code: 403. Errors:
+  | 
+  | * permission denied
+driver has same
+vault:
+
+Cause:
+network policies dont allow pod traffic
+
+Also, cant terminate pods. Likely because calico's user file not updating:
+ Failed to create pod sandbox: rpc error: code = Unknown desc = failed to create pod network sandbox k8s_multitool-648d45b865-9tdm8_default_384da649-d1ba-4842-85f9-2a7d02bfaf61_0(0285a4fb934f1adf6e0404bb262a0a6e4abf3476cf2c7b28826080a7b3ffd1bb): error adding pod default_multitool-648d45b865-9tdm8 to CNI network "k8s-pod-network": plugin type="calico" failed (add): error getting ClusterInformation: connection is unauthorized: Unauthorized
+
 
 ## Enable KES integraation
 https://min.io/docs/kes/cli/
@@ -537,6 +659,10 @@ path "kv/*" {
 }
 EOF
 
+kubectl create ns ledgerbadger-prod
+
+kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
+
 vault write -address "$VAULT_ADDR" \
 auth/kubernetes/role/minio-ledgerbadger-kes-role \
     bound_service_account_names=minio-kes-sa \
@@ -544,11 +670,8 @@ auth/kubernetes/role/minio-ledgerbadger-kes-role \
     policies=minio-ledgerbadger-kes \
     ttl=20m 
 
+vault auth enable -address "$VAULT_ADDR" kubernetes
 
-kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
-
-show issuer:
-openssl x509 -in public.crt -noout -text -sha256
 KUBE_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 --d)
 KUBE_HOST=$(kubectl config view --raw --minify --flatten --output='jsonpath={.clusters[].cluster.server}') 
 TOKEN_REVIEW_JWT=$(kubectl get secret vault-sa-token -o go-template='{{ .data.token }}' | base64 --decode) 
@@ -775,7 +898,6 @@ https://min.io/docs/minio/kubernetes/upstream/operations/network-encryption.html
 helm repo add minio-operator https://operator.min.io
 helm install --namespace minio-operator --create-namespace operator minio-operator/operator
 kubectl get all -n minio-operator
-kubectl create ns ledgerbadger-prod
 MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"\nexport MINIO_KMS_KES_CERT_FILE="/kes/minio-kes.crt"\nexport MINIO_KMS_KES_KEY_FILE="/kes/minio-kes.key"\nexport MINIO_KMS_KES_KEY_NAME="minio-ledgerbadger-prod"')
 
 kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
@@ -945,7 +1067,7 @@ Then replace static ipam CNI plugin with the Calico CNI plugin, which requires i
 Finally we install the operator and create an APIServer and ConfigMap.
 Explore: Would prefer ipam.subnet be the VM CIDR?
 
-## Create a User Cert for Calico
+## DONT DO THIS! Create a User Cert for Calico
 Calico CNI plugin runs outside the cluster, so it needs a kubeconfig. A service account will not work.
 Host:
 ```
@@ -977,6 +1099,9 @@ kubectl config set-credentials calico-cni \
 kubectl config set-context default \
     --cluster=kubernetes \
     --user=calico-cni \
+    --current \
+    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+kubectl config use-context default \
     --kubeconfig=guest/generated/users/calico-cni.kubeconfig
 
 kubectl apply -f guest/manifests/static/calico-cni-role.yaml
@@ -1023,6 +1148,18 @@ kubectl create -f guest/manifests/static/calico-node-status.yaml
 kubectl get caliconodestatus my-caliconodestatus-1 -o yaml
 
 ```
+
+## Issues:
+Manually created calico user kubeconfig was never copied into place.
+Manually created has no current context, so it polled localhost:8080, which makes no sense
+Manually created file missing permission: User "calico-cni" cannot list resource "services" in API group "" in the namespace "kube-system"
+So even if it is copied into place, its fucked
+Auto generated kubeconfig file is fucked: couldn't get current server API group list: the server has asked for the client to provide credentials
+sudo cp /usr/share/host/guest/generated/users/calico-cni.kubeconfig /etc/cni/net.d/calico-kubeconfig
+something else updated the kubeconfig to employ user "calico-cni-plugin", which has a different role.
+Solution: DONT COPY Manually created kubeconfig onto nodes calico-kubeconfig!
+
+
 Finally, we need to clear any existing static routes, so reboot each host.
 
 ## Validate progress so far

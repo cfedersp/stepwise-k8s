@@ -5,7 +5,8 @@ metadata:
 spec:
   provider: vault
   parameters:
-    vaultAddress: "http://vault.default:8200"
+    vaultCACertPath: '/vault/tls/kubernetes.ca'
+    vaultAddress: "https://vault.default:8200"
     roleName: "database"
     objects: |
       - objectName: "db-password"
