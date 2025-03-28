@@ -169,7 +169,8 @@ ssh to the ip of your VM  using your favorite terminal.
 Clear the contents of etc/machine-id but keep the file  
 paste into your new terminal  
 ```
-sudo timedatectl set-timezone America/Los_Angeles
+# This didnt fix anything
+# sudo timedatectl set-timezone America/Los_Angeles
 chmod 775 mount-share.sh
 sudo ./mount-share.sh
 sudo /usr/share/host/guest/all-nodes/apt-crio-k8s-installs.sh
@@ -224,7 +225,7 @@ Create Volume Group for application data:
 ```
 sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
 ```
-Configure static IPAM CNI: (Skip if existing nodes already have Calico - CalicoNode will install the CNI config and binaries for us)
+Skipped this: Configure static IPAM CNI: (Skip if existing nodes already have Calico - CalicoNode will install the CNI config and binaries for us)
 ```
 /usr/share/host/guest/cni/customize-pod-cidr.sh 1
 sudo mkdir -p /etc/cni/net.d
@@ -239,7 +240,7 @@ mkdir -p ~/.kube; cp /usr/share/host/guest/generated/admin.conf ~/.kube/config
 kubectl get nodes  
 ```
 
-# Setup Network Routes:
+#  Skipped: Setup Network Routes:
 Note all connectivity to master has been by ip address so far. This will allow pods to reach each other when they reside on different VMs  
 ```
 python3 /usr/share/host/guest/all-nodes/gen-route-add.py cni $(route | grep default | awk '{print $NF}') 10.85.0.0 $(kubectl get nodes -o json | jq -j '[.items[].status.addresses[0].address] | join(" ")')
@@ -381,7 +382,7 @@ source applications/default-ns-env vault ledgerbadger
 ./applications/create-k8s-csr-conf.sh vault > ${CERTDIR}/vault-csr.conf
 openssl req -new -key ${CERTDIR}/vault.key -out ${CERTDIR}/vault.csr -config ${CERTDIR}/vault-csr.conf
 
-./applications/gen-serving-csr.sh ledgerbadger-vault.svc ${CERTDIR}/vault.csr > ${CERTDIR}/manifests/vault-csr.yaml
+./applications/gen-serving-csr-yaml.sh ledgerbadger-vault.svc ${CERTDIR}/vault.csr > ${CERTDIR}/manifests/vault-csr.yaml
 kubectl create -f ${CERTDIR}/manifests/vault-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-vault.svc
@@ -398,9 +399,10 @@ openssl rsa -modulus -noout -in $CERTDIR/vault.key | openssl md5
 openssl x509 -modulus -noout -in $CERTDIR/vault.crt | openssl md5
 
 export VAULT_K8S_NAMESPACE=default
-kubectl create secret generic vault-ca \
-   -n $VAULT_K8S_NAMESPACE \
-   --from-file=kubernetes.ca=$CERTDIR/kubernetes.ca
+# Create the KES cert and include it! See vault-trust-store below.
+#kubectl create secret generic vault-ca \
+#   -n $VAULT_K8S_NAMESPACE \
+#   --from-file=kubernetes.ca=$CERTDIR/kubernetes.ca
 
 kubectl create secret generic vault-ha-tls \
    -n $VAULT_K8S_NAMESPACE \
@@ -447,11 +449,11 @@ VAULT_UNSEAL_KEY=$(sudo jq -r ".unseal_keys_b64[]" applications/generated/cluste
 kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 echo "Now have the other instances join the first"
 
-kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8201
 
 kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 
-kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8200
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://vault-0.vault-internal:8201
 
 kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
 VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
@@ -513,12 +515,6 @@ VAULT_ADDR="https://$VAULT_FQDN_IN_HOSTS:$VAULT_PORT"
 vault status -address="$VAULT_ADDR" -ca-cert="$CERTDIR/ledgerbadger-vault.ca" 
 # TODO: Remove old k8s cert from KeyChain
 # TODO: Then, Add new k8s cert to KeyChain
-export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
-VAULT_PORT=$(kubectl get svc vault -o json | jq -r '.spec.ports[0].port')
-VAULT_SVC="vault"
-# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
-VAULT_ADDR="https://$VAULT_SVC:$VAULT_PORT"
-kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault login -address="$VAULT_ADDR" -ca-cert="/vault/userconfig/vault-ha-tls//kubernetes.ca" $CLUSTER_ROOT_TOKEN
 
 
 vault login -address="$VAULT_ADDR" -ca-cert="$CERTDIR/kubernetes.ca" $CLUSTER_ROOT_TOKEN
@@ -554,8 +550,8 @@ vault auth list -address "$VAULT_ADDR"
 # KUBERNETES_HOST=$(kubectl config view -o json | jq -r '.clusters[0].cluster.server')
 # KUBERNETES_HOST=$(kubectl get svc kubernetes -o json | jq -r '.spec.clusterIP')
 KUBERNETES_PORT=$(kubectl get svc kubernetes -o json | jq -r '.spec.ports[0].port')
-KUBERNETES_ENDPOINT="kubernetes:$KUBERNETES_PORT"
-vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="$KUBERNETES_ENDPOINT"
+KUBERNETES_ENDPOINT="kubernetes.default.svc:$KUBERNETES_PORT"
+vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="$KUBERNETES_ENDPOINT" disable_local_ca_jwt="true"
 vault read -address "$VAULT_ADDR" auth/kubernetes/config
 kubectl create serviceaccount my-apps-sa
 
@@ -652,10 +648,21 @@ https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
 https://support.hashicorp.com/hc/en-us/articles/4404389946387-Kubernetes-auth-method-Permission-Denied-error
 ```
 
-
-vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes - <<EOF
+# OK to create both, I would prefer the 2nd, but use V1 for now
+# KV version 1:
+vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes-v1 - <<EOF
 path "kv/*" {
    capabilities = [ "create", "read", "delete", "list" ]
+}
+EOF
+
+# KV version 2:
+vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes-v2 - <<EOF
+path "kv/data/*" {
+   capabilities = [ "create", "read" ]
+}
+path "kv/metadata/*" {
+   capabilities = [ "delete", "list" ]
 }
 EOF
 
@@ -663,23 +670,25 @@ kubectl create ns ledgerbadger-prod
 
 kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
 
-vault write -address "$VAULT_ADDR" \
-auth/kubernetes/role/minio-ledgerbadger-kes-role \
+vault write -address "$VAULT_ADDR" auth/kubernetes/role/minio-ledgerbadger-kes-role \
     bound_service_account_names=minio-kes-sa \
     bound_service_account_namespaces=ledgerbadger-prod \
-    policies=minio-ledgerbadger-kes \
+    policies=minio-ledgerbadger-kes-v1 \
     ttl=20m 
 
-vault auth enable -address "$VAULT_ADDR" kubernetes
+# already done: 
+# vault auth enable -address "$VAULT_ADDR" kubernetes
 
-KUBE_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 --d)
-KUBE_HOST=$(kubectl config view --raw --minify --flatten --output='jsonpath={.clusters[].cluster.server}') 
-TOKEN_REVIEW_JWT=$(kubectl get secret vault-sa-token -o go-template='{{ .data.token }}' | base64 --decode) 
-vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" 
-Shouldn't neeed this because cluster CA is already trusted?
-kubernetes_ca_cert="$KUBE_CA_CERT" 
-Shouldn't need these because sa is configured for Vault:
-vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true" token_reviewer_jwt="$TOKEN_REVIEW_JWT"
+# NOT SURE: does kes need this or existing minimal config is sufficient?
+# you can omit the token_reviewer_jwt, and Vault will use the Vault client's JWT as its own auth token when communicating with the Kubernetes TokenReview API
+# KUBE_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 --d)
+# KUBE_HOST=$(kubectl config view --raw --minify --flatten --output='jsonpath={.clusters[].cluster.server}') 
+# TOKEN_REVIEW_JWT=$(kubectl get secret vault-sa-token -o go-template='{{ .data.token }}' | base64 --decode) 
+# vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" 
+# Shouldn't neeed this because cluster CA is already trusted?
+# kubernetes_ca_cert="$KUBE_CA_CERT" 
+# Shouldn't need these because sa is configured for Vault:
+# vault write -address "$VAULT_ADDR" auth/kubernetes/config issuer="kubernetes" kubernetes_host="$KUBE_HOST" kubernetes_ca_cert="$KUBE_CA_CERT" disable_local_ca_jwt="true" token_reviewer_jwt="$TOKEN_REVIEW_JWT"
 
 vault read -address "$VAULT_ADDR" auth/kubernetes/config
 ```
@@ -700,7 +709,7 @@ helm install --version 0.9.1 vault-secrets-operator hashicorp/vault-secrets-oper
 
 # Delete Vault + Volumes
 ```
-helm uninstall vault hashicorp/vault
+helm uninstall vault 
 kubectl delete pvc data-vault-0
 ```
 
@@ -714,10 +723,12 @@ validation steps?
 https://github.com/minio/kes
 https://min.io/docs/kes/integrations/hashicorp-vault-keystore/
 https://min.io/docs/minio/kubernetes/gke/reference/operator-crd.html
-Kubernetes service account means we dont have to configure mTLS.
+https://raw.githubusercontent.com/minio/operator/master/examples/kustomization/tenant-kes-encryption/tenant.yaml
+The operator does not auto-generate certs. We create them and the deployment expects the keys in the secret to have specific names.
+Kubernetes service account means we dont have to configure mTLS. WRONG
 create and configure kes service account - tenant.kes.serviceAccountName? yes. done
 create TLS certs for kes. If TLS certs dont use CA trusted by Vault (kubernetes), then multiple CAs must be mounted under /etc/ssl/certs/.
-Possible to use kes identity, but the API Key and identity are not needed.
+Possible to use kes identity, but the API Key and identity are not needed. WRONG
 create kes identity for minio. It is its own authentication mechanism, not mTLS, does not use kubernetes, so does not need to be same name as service account.
 Add the kes policy to kes config. It refers to kes endpoints, not vault endpoints. Either set the policy w/ minio indentity ..OR.. give minio admin access by setting .root to the minio identity
 later: create kes identity for CLI access, will be set in .admin.identity
@@ -738,11 +749,13 @@ create Kubernetes Vault Policy + Role that allows access to ledgerbadger secrets
 create minio service account? done
 configure kes
 
-Using kes, create minio client cert. This is a self-signed cert, but its not x509 TLS cert. It cannot be generated or parsed fully by openssl. It does not need to be signed by any CA. The generated key, cert, API key and fingerprint can be stored in Vault, but dont need to be.
-configure its identity in the tenant.kes.admin.identity. The key and cert get configured in minio, not vault or minio's kes config.
+Using kes, create minio client cert called an "identity". This is a self-signed cert, but its not x509 TLS cert. It cannot be generated or parsed fully by openssl. It does not need to be signed by any CA. The generated key, cert, API key and fingerprint can be stored in Vault, but doesnt need to be.
+configure its identity in the tenant.kes.admin.identity. The identity fingerprint and TLS key and cert get configured in minio kes config, not necessarily vault. minio's kes config does not use the identiy - admin users use it and kes simply validates them using the fingerprint.
 mount the minio client cert secret in minio tenant additionalvolumes.
 configure the minio client cert in minio. note the API KEY: kes:v1:AJ9e6sX9eJiAta8jtGjK1ngRpL1JTBIwcxN6WswNVGYP
 create the default encryption key (EK)? yes: "my-minio-key"
+
+KES doesn't talk to kubernetes, it only talks to Vault, but Vault talks to kubernetes, so for us to trust each other, the kes cert is signed by kubernetes for now until we figure out how vault distinguishes TLS from trusted CAs.
 
 what is path to tls cert files?
 what is MINIO_KES_IDENTITY?
@@ -753,39 +766,86 @@ deploy minio tenant
 source applications/default-ns-env kes
 export WORKDIR=applications/generated/certs
 openssl genrsa -out ${WORKDIR}/kes.key 2048
-./applications/create-csr-conf.sh ledgerbadger-kes > ${WORKDIR}/kes-csr.conf
+./applications/create-k8s-csr-conf.sh ledgerbadger-kes > ${WORKDIR}/kes-csr.conf
 openssl req -new -key ${WORKDIR}/kes.key -out ${WORKDIR}/kes.csr -config ${WORKDIR}/kes-csr.conf
-./applications/gen-csr.sh ledgerbadger-kes.svc ${WORKDIR}/kes.csr > ${WORKDIR}/manifests/kes-csr.yaml
+./applications/gen-serving-csr-yaml.sh ledgerbadger-kes.svc ${WORKDIR}/kes.csr > ${WORKDIR}/manifests/kes-csr.yaml
 kubectl create -f ${WORKDIR}/manifests/kes-csr.yaml
 kubectl get csr
 kubectl certificate approve ledgerbadger-kes.svc
 kubectl get csr ledgerbadger-kes.svc -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${WORKDIR}/kes.crt
 DONT! This is the cluster root ca, which is already a secret in every namespace:
-kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-kes.ca
-openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-kes.ca
-
-kubectl create secret tls  kes-tls -n ledgerbadger-prod --cert ${WORKDIR}/kes.crt --key ${WORKDIR}/kes.key
-
-kubectl create secret generic kes-tls \
-   -n ledgerbadger-prod \
-   --from-file=kes.key=${WORKDIR}/kes.key \
-   --from-file=kes.crt=${WORKDIR}/kes.crt
+# kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[].cluster.certificate-authority-data}' | base64 -d > ${WORKDIR}/ledgerbadger-kes.ca
+# openssl x509 -text -noout -in ${WORKDIR}/ledgerbadger-kes.ca
 
 
-kes identity new --key=${WORKDIR}/minio-ledgerbadger-prod.key --cert=${WORKDIR}/minio-ledgerbadger-prod.crt minio-ledgerbadger-prod
-mkdir -p ${WORKDIR}/kesadmin
-kes identity new --key=${WORKDIR}/kesadmin/charlie.key --cert=${WORKDIR}/kesadmin/charlie.crt charlie
-API: kes:v1:APyZE/WnPqohCZQW+gld1xjEdwEADNfuOPLr2+gtMc8u
-ID: 70d80035b100a05d9fa9b2059ba1b78bd404bea9730daedcbbc705534d1515d2
+kubectl create secret tls kes-tls -n ledgerbadger-prod \
+--cert=${WORKDIR}/kes.crt \
+--key=${WORKDIR}/kes.key \
+--certificate-authority=${WORKDIR}/kubernetes.ca
+
+# kubectl create secret generic kes-tls -n ledgerbadger-prod \
+# --from-file=public.crt=${WORKDIR}/kes.crt \
+# --from-file=private.key=${WORKDIR}/kes.key 
+
+# --certificate-authority ${WORKDIR}/kubernetes.ca
+
+# minio helm chart wants a string, so we concat the certs into a bundle below
+# kubectl create secret generic kes-client-certs \
+#  -n ledgerbadger-prod \
+#  --from-file=kubernetes.ca=${WORKDIR}/kubernetes.ca \
+#  --from-file=vault.crt=${WORKDIR}/vault.crt
+
+# kubectl get cm kube-root-ca.crt -n ledgerbadger-prod -o json | jq -r '.data."ca.crt"' > ${WORKDIR}/kes-client-certs.bundle
+# kubectl get secret my-cluster-clients-ca-cert -n kafka -o json | jq -r '.data."ca.crt"' | base64 -d > $WORKDIR/kafka.crt >> ${WORKDIR}/kes-client-certs.bundle
+# cat ${WORKDIR}/vault.crt >> ${WORKDIR}/kes-client-certs.bundle
+#kubectl create secret generic kes-client-certs \
+# -n ledgerbadger-prod \
+# --from-file=trust-bundle.ca=${WORKDIR}/kes-client-certs.bundle
+
+kubectl create secret generic kes-client-certs -n ledgerbadger-prod \
+ --from-file=${WORKDIR}/kubernetes.ca \
+ --from-file=${WORKDIR}/vault.crt \
+ --from-file=${WORKDIR}/vault.key \
+ --from-file=$WORKDIR/kafka.crt
+
+ kubectl create secret generic vault-client-certs \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=kubernetes.ca=$CERTDIR/kubernetes.ca
+   --from-file=${WORKDIR}/kes.crt \
+  --from-file=${WORKDIR}/kes.key 
+
+mkdir -p ${WORKDIR}/miniokes/
+kes identity new --key=${WORKDIR}/miniokes/minio-ledgerbadger-prod.key --cert=${WORKDIR}/miniokes/minio-ledgerbadger-prod.crt minio-ledgerbadger-prod > $WORKDIR/miniokes/minio-kes-id.txt
+
+mkdir -p ${WORKDIR}/kesadmins/
+kes identity new --key=${WORKDIR}/kesadmins/charlie-kes-prod.key --cert=${WORKDIR}/kesadmins/charlie-kes-prod.crt charlie-kes-prod > $WORKDIR/kesadmins/charlie-kes-admin-id.txt
+
+cat $WORKDIR/kesadmins/charlie-kes-admin-id.txt
+# update minio-tenant.yaml with the admin user identity
 
 kubectl create secret generic minio-ledgerbadger-prod-kes-cred \
    -n ledgerbadger-prod \
-   --from-file=minio-kes.key=${WORKDIR}/minio-ledgerbadger-prod.key \
-   --from-file=minio-kes.crt=${WORKDIR}/minio-ledgerbadger-prod.crt
+   --from-file=minio-kes.key=${WORKDIR}/miniokes/minio-ledgerbadger-prod.key \
+   --from-file=minio-kes.crt=${WORKDIR}/miniokes/minio-ledgerbadger-prod.crt
+
+# DONT: We already configured auth/kubernetes/role/minio-ledgerbadger-kes-role in Vault using the v1 policy.
+# vault auth enable approle
+# vault write auth/approle/role/kes-server token_num_uses=0  secret_id_num_uses=0  period=5m
+# vault write auth/approle/role/kes-server policies=kes-policy
+# vault read auth/approle/role/kes-server/role-id 
+# vault write -f auth/approle/role/kes-server/secret-id 
+
+helm repo add minio-operator https://operator.min.io
+helm install --namespace minio-operator --create-namespace operator minio-operator/operator
+
+MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"\nexport MINIO_KMS_KES_CERT_FILE="/kes/minio-kes.crt"\nexport MINIO_KMS_KES_KEY_FILE="/kes/minio-kes.key"\nexport MINIO_KMS_KES_KEY_NAME="minio-ledgerbadger-prod"')
+
+kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
 helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
-helm uninstall ledgerbadger-prod -n ledgerbadger-prod
 ```
+
+
 kes.configuration.keystore.vault:
 tls:   
             key: /tmp/kes/server.key   # Path to the TLS private key
@@ -877,9 +937,25 @@ vault secrets enable pki
 vault write -field=certificate pki/root/generate/internal \
         common_name="dc1.consul" \
         ttl=87600h > CA_cert.crt
+
+fixed kubernetes host and it worked
+```
+Next error:
+calico-node logs:
+(combined from similar events): Failed to create pod sandbox: rpc error: code = Unknown desc = failed to create pod network sandbox k8s_multitool-648d45b865-tm6z6_default_debde4c0-285a-4f47-afbe-a60a9633da93_0(16984ac07be42c8b6b41b1de32cbab3cea6fd6e9cd5edd364787c8cad865aae7): error adding pod default_multitool-648d45b865-tm6z6 to CNI network "k8s-pod-network": plugin type="calico" failed (add): error getting ClusterInformation: connection is unauthorized: Unauthorized
+
+Also, pods wont terminate after running uninterrupted for a day;
+resoution:
+restart calico-nodes: kubectl delete pod -l k8s-app=calico-node -n calico-system 
+likely cant write calico-kubeconfig?
+
+# Cleanup:
+Why do we need to use helm to delete a custom resource?
+```
+helm uninstall ledgerbadger-prod -n ledgerbadger-prod
 ```
 
-# Install an Object Store
+# DONT USE this SECTION: Install an Object Store
 We need to specify the kafka brokers, so we'll specify the root credentials while we're at it.  
 Future task: setup external identity provider so we dont have to handle user credentials here.
 The MinIO config secret must contain key 'config.env', containing export or set commands.
@@ -902,7 +978,7 @@ MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NO
 
 kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
-ROOTCACERT=$(kubectl get cm kube-root-ca.crt -n kafka -o json | jq -r '.data."ca.crt"')
+ROOTCACERT=$(kubectl get cm kube-root-ca.crt -n edgerbadger-prod -o json | jq -r '.data."ca.crt"')
 kubectl create secret  my-cluster-cluster-ca -n ledgerbadger-prod --cert $ROOTCACERT
 kubectl create secret generic my-cluster-cluster-ca -n ledgerbadger-prod --from-literal=public.crt=$ROOTCACERT
 
@@ -1031,6 +1107,12 @@ PodNodeSelector: https://stackoverflow.com/questions/52487333/how-to-assign-a-na
 -p --event post,put,delete
 s3:ObjectCreated:Post,s3:ObjectCreated:Put,s3:ObjectCreated:Delete
 
+# install loki, writes to minio
+```
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+helm install loki grafana/loki -f values.yaml
+```
 
 # Pending: install LDAP
 https://github.com/osixia/docker-open
@@ -1071,54 +1153,58 @@ Explore: Would prefer ipam.subnet be the VM CIDR?
 Calico CNI plugin runs outside the cluster, so it needs a kubeconfig. A service account will not work.
 Host:
 ```
-mkdir -p guest/generated/users/
-openssl req -newkey rsa:4096 \
-           -keyout guest/generated/certs/calico-cni.key \
-           -nodes \
-           -out guest/generated/certs/calico-cni.csr \
-           -subj "/CN=calico-cni"
-./guest/utils/gen-user-csr.sh calico-user guest/generated/certs/calico-cni.csr > guest/generated/certs/calico-cni.yaml
-kubectl create -f guest/generated/certs/calico-cni.yaml
-kubectl get csr
-kubectl certificate approve calico-user
-kubectl get csr calico-user -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out guest/generated/certs/calico-user.crt
+# mkdir -p guest/generated/users/
+#openssl req -newkey rsa:4096 \
+#           -keyout guest/generated/certs/calico-cni.key \
+#           -nodes \
+#           -out guest/generated/certs/calico-cni.csr \
+#           -subj "/CN=calico-cni"
+# ./guest/utils/gen-user-csr.sh calico-user guest/generated/certs/calico-cni.csr > guest/generated/certs/calico-cni.yaml
+# kubectl create -f guest/generated/certs/calico-cni.yaml
+# kubectl get csr
+# kubectl certificate approve calico-user
+# kubectl get csr calico-user -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out guest/generated/certs/calico-user.crt
 
-APISERVER=$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')
-kubectl config set-cluster kubernetes \
-    --certificate-authority=guest/generated/certs/ca.crt \
-    --embed-certs=true \
-    --server=$APISERVER \
-    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+# APISERVER=$(kubectl config view -o jsonpath='{.clusters[0].cluster.server}')
+# kubectl config set-cluster kubernetes \
+#    --certificate-authority=guest/generated/certs/ca.crt \
+#    --embed-certs=true \
+#    --server=$APISERVER \
+#    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
 
-kubectl config set-credentials calico-cni \
-    --client-certificate=guest/generated/certs/calico-user.crt \
-    --client-key=guest/generated/certs/calico-cni.key \
-    --embed-certs=true \
-    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+# kubectl config set-credentials calico-cni \
+#   --client-certificate=guest/generated/certs/calico-user.crt \
+#   --client-key=guest/generated/certs/calico-cni.key \
+#    --embed-certs=true \
+#    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
 
-kubectl config set-context default \
-    --cluster=kubernetes \
-    --user=calico-cni \
-    --current \
-    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
-kubectl config use-context default \
-    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+# kubectl config set-context default \
+#    --cluster=kubernetes \
+#    --user=calico-cni \
+#    --current \
+#    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
+# kubectl config use-context default \
+#    --kubeconfig=guest/generated/users/calico-cni.kubeconfig
 
-kubectl apply -f guest/manifests/static/calico-cni-role.yaml
-kubectl create clusterrolebinding calico-cni --clusterrole=calico-cni --user=calico-user
+# kubectl apply -f guest/manifests/static/calico-cni-role.yaml
+# kubectl create clusterrolebinding calico-cni --clusterrole=calico-cni --user=calico-user
 
-kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+# kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 ```
 
-## Install CalicoCtl
+##  CALICO APISERVER makes this OBSOLETE: dont do this: Install CalicoCtl
 Host:
 ```
-cd ~/opt/utils/
-curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-arm64 -o calicoctl
-chmod +x calicoctl
-curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-amd64 -o kubectl-calico
-chmod +x kubectl-calico
-kubectl calico -h
+# cd ~/opt/utils/
+# curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-arm64 -o calicoctl
+# chmod +x calicoctl
+# curl -L https://github.com/projectcalico/calico/releases/download/v3.29.2/calicoctl-darwin-arm64 -o ~/opt/utils/kubectl-calico
+# chmod +x ~/opt/utils/kubectl-calico
+# kubectl calico -h
+# export DATASTORE_TYPE=kubernetes
+# export KUBECONFIG=~/.kube/config
+# calicoctl get node
+# calicoctl get workloadendpoints
 
 ```
 Full CalicoCtl Command Set:
@@ -1131,11 +1217,11 @@ calicoctl version
 
 Host:
 ```
-kubectl taint nodes --all node-role.kubernetes.io/control-plane-
 # For ref: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
-#TODO: fix this so we dont have to patch the pool after the fact
 kubectl create -f guest/manifests/static/calico-custom-resources.yaml
+kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+
 ```
 Each Node:(NOT NEEDED! Calico-node does this for us!)
 ```
@@ -1209,11 +1295,31 @@ kubectl get deployment calico-typha -n calico-system -o json | jq -r '.spec.temp
 /usr/share/host/vm-prep/validation/typha-cert.sh
 ```
 ## Enable ingress via NodePort
+https://docs.tigera.io/calico/latest/network-policy/services/kubernetes-node-ports
 https://medium.com/expedia-group-tech/network-policies-with-calico-for-kubernetes-networking-875c0ebbcfb3
 https://github.com/kubernetes-client/python?tab=readme-ov-file
+Validate RAFT replication in both directions while setting network policies to make sure they dont impact pod-to-pod comms.
 
 ```
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv put secret/test-secret password="abcd"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault login $CLUSTER_ROOT_TOKEN
+kubectl logs vault-0
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault kv get secret/test-secret
+
 kubectl create -f guest/manifests/static/network-policies.yaml
+
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv put secret/test-secret2 password="abcdefg"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault kv get secret/test-secret2
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault kv put secret/test-secret3 password="efghi"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv get secret/test-secret3
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- date
+kubectl logs vault-1
+
+kubectl create -f guest/manifests/static/ledgerbadger-vault-ingress-policy.yaml
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv put secret/test-secret4 password="zyxgr"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault kv get secret/test-secret4
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-1 -- vault kv put secret/test-secret5 password="efghi"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv get secret/test-secret5
 ```
 
 ## Next:
@@ -1234,6 +1340,20 @@ New Connections will be routed to Linux's BPF
 ./guest/utils/calico-ebpf-cm.yaml.sh | kubectl create -f -
 kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":{"non-calico": "true"}}}}}'
 kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"BPF"}}}'
+kubectl get installation.operator.tigera.io default -o json | jq -r '.spec.calicoNetwork.linuxDataplane'
+```
+Validation:
+find a node that isn't the ingress
+```
+kubectl get pods -o json | jq -r '.items[] | {metadataName: .metadata.name, hostIp: .status.hostIP, podIP: .status.podIP} | select(.hostIp=="192.168.64.23") '
+
+VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
+VAULT_FQDN_IN_HOSTS="ledgerbadger-vault.default.svc.cluster.local"
+# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
+VAULT_ADDR="https://$VAULT_FQDN_IN_HOSTS:$VAULT_PORT"
+
+vault kv put -address "$VAULT_ADDR" secret/test-secret8 password="zyxgr"
+kubectl exec -n $VAULT_K8S_NAMESPACE vault-0 -- vault kv get secret/test-secret8
 ```
 Host:
 Visit in Browser:

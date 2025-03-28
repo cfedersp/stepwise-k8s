@@ -10,7 +10,7 @@ spec:
   ingress:
     - action: Allow
       source:
-        nets: [192.168.64.0/24, 192.168.1.0/24]
+        nets: [192.168.64.0/24, 10.85.0.0/16]
     - action: Deny
   selector: has(kubernetes-host)
 ---
@@ -27,27 +27,11 @@ spec:
 apiVersion: projectcalico.org/v3
 kind: HostEndpoint
 metadata:
-  name: worker6-enp0s1
+  name: worker2-enp0s1
   labels:
     kubernetes-host: ingress
 spec:
   interfaceName: enp0s1
-  node: worker6
+  node: worker2
   expectedIPs:
     - 192.168.64.21
----
-apiVersion: projectcalico.org/v3
-kind: GlobalNetworkPolicy
-metadata:
-  name: allow-multitool
-spec:
-  preDNAT: true
-  applyOnForward: true
-  order: 10
-  ingress:
-    - action: Allow
-      protocol: TCP
-      destination:
-        selector: has(kubernetes-host)
-        ports: [32349]
-  selector: has(kubernetes-host)

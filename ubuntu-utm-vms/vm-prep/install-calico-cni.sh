@@ -24,3 +24,5 @@ if [ ${#confFiles[@]} ]; then
     for file in "${confFiles[@]}"; do mv "$file" "${file/conflist/conflist.disabled}"; done
 fi
 cp /usr/share/host/guest/cni/10-calico.conflist /etc/cni/net.d/
+
+kubectl create clusterrolebinding calico-cni --clusterrole=calico-cni --user=calico-cni

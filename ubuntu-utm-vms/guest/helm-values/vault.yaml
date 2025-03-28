@@ -596,7 +596,7 @@ server:
     - name: vault-trust
       secret:
         defaultMode: 292
-        secretName: vault-ca
+        secretName: vault-client-certs
     - name: userconfig-vault-ha-tls
       secret:
         defaultMode: 420

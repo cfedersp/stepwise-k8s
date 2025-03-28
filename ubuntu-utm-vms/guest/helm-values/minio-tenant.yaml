@@ -30,7 +30,7 @@ tenant:
   #
   image:
     repository: quay.io/minio/minio
-    tag: RELEASE.2024-10-02T17-50-41Z
+    tag: RELEASE.2025-03-12T18-04-18Z
     pullPolicy: IfNotPresent
   ###
   #
@@ -144,7 +144,7 @@ tenant:
       # If using Amazon Elastic Block Store (EBS) CSI driver
       # Please make sure to set xfs for "csi.storage.k8s.io/fstype" parameter under StorageClass.parameters.
       # Docs: https://github.com/kubernetes-sigs/aws-ebs-csi-driver/blob/master/docs/parameters.md
-      storageClassName: openebs-lvmpv
+      storageClassName: openebs-lvm
       ###
       # Specify `storageAnnotations <https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/>`__ to associate to PVCs.
       storageAnnotations: { }
@@ -245,9 +245,7 @@ tenant:
     # This is used by MinIO to verify TLS connections from clients using those CAs
     # If you omit this and have clients using TLS certificates minted by an external CA, those connections may fail with warnings around certificate verification.
     # See `Operator CRD: TenantSpec <https://min.io/docs/minio/kubernetes/upstream/reference/operator-crd.html#tenantspec>`__.
-    externalCaCertSecret: 
-      - name: my-cluster-cluster-ca
-        type: Opaque
+    externalCaCertSecret: []
     ###
     # Specify an array of Kubernetes secrets, where each entry corresponds to a secret contains the TLS private key and public certificate pair.
     #
@@ -264,10 +262,12 @@ tenant:
     #    You can pass the CA to the Operator to allow it to trust that cert.
     #    See `Self-Signed, Internal, and Private Certificates <https://min.io/docs/minio/kubernetes/upstream/operations/network-encryption.html#self-signed-internal-and-private-certificates>`__ for more information.
     #    This step may also be necessary for globally trusted CAs where you must provide intermediate certificates to the Operator to help build the full chain of trust.
-    externalCertSecret: [ ]
+    externalCertSecret: 
+      - name: minio-tls
+        type: Opaque
     ###
     # Enable automatic Kubernetes based `certificate generation and signing <https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster>`__
-    requestAutoCert: true
+    requestAutoCert: false
     ###
     # The minimum number of days to expiry before an alert for an expiring certificate is fired.
     # In the below example, if a given certificate will expire in 7 days then expiration events will only be triggered 1 day before expiry
@@ -333,7 +333,7 @@ tenant:
   exposeServices: { }
   ###
   # The `Kubernetes Service Account <https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/>`__ associated with the Tenant.
-  serviceAccountName: ""
+  serviceAccountName: "minio-kes-sa"
   ###
   # Directs the Operator to add the Tenant's metric scrape configuration to an existing Kubernetes Prometheus deployment managed by the Prometheus Operator.
   prometheusOperator: false
@@ -388,35 +388,38 @@ tenant:
     - name: kes-cred
       mountPath: /kes
       readOnly: true
-  # Define configuration for KES (stateless and distributed key-management system)
-  # Refer https://github.com/minio/kes
+    # Define configuration for KES (stateless and distributed key-management system)
+    # Refer https://github.com/minio/kes
   kes:
-  #  ## Image field:
-  #  # Image from tag (original behavior), for example:
-  #  # image:
-  #  #   repository: quay.io/minio/kes
-  #  #   tag: 2024-09-11T07-22-50Z
-  #  # Image from digest (added after original behavior), for example:
-  #  # image:
-  #  #   repository: quay.io/minio/kes@sha256
-  #  #   digest: fb15af611149892f357a8a99d1bcd8bf5dae713bd64c15e6eb27fbdb88fc208b
+    #  ## Image field:
+    #  # Image from tag (original behavior), for example:
+    #  # image:
+    #  #   repository: quay.io/minio/kes
+    #  #   tag: 2024-09-11T07-22-50Z
+    #  # Image from digest (added after original behavior), for example:
+    #  # image:
+    #  #   repository: quay.io/minio/kes@sha256
+    #  #   digest: fb15af611149892f357a8a99d1bcd8bf5dae713bd64c15e6eb27fbdb88fc208b
     image:
       repository: quay.io/minio/kes
       tag: 2024-09-11T07-22-50Z
       pullPolicy: IfNotPresent
-  #  env: [ ]
+    #  env: [ ]
     replicas: 1
+    externalCertSecret:
+      name: kes-tls
+      type: kubernetes.io/tls
     clientCertSecret: 
-      name: my-cluster-cluster-ca
+      name: kes-client-certs
       type: generic
     configuration: |-
       address: :7373
       tls:
         key: /tmp/kes/server.key
         cert: /tmp/kes/server.crt
-        ca: /tmp/kes/public.crt
+        ca: /tmp/kes/mac-hosting-ca-2025.pem
       admin:
-        identity: 70d80035b100a05d9fa9b2059ba1b78bd404bea9730daedcbbc705534d1515d2
+        identity: cc0bf0a14f166f0f7dc145832691b35b126ebcbe69a13486a9fc8375cff82e9f
       cache:
         expiry:
           any: 5m0s
@@ -437,7 +440,7 @@ tenant:
             - /v1/key/generate/my-app-internal*
             - /v1/key/decrypt/my-app-internal*
           identities: 
-            - "750293273b51f2b8e111009709613f60b33f03f3b8f43c3e1bfc7c4d8ef7fea7"
+            - "bf9778a75a44c50f2c53e5f4e4248c2dd19f8e632391a0115aed49aa0b318c3d"
       log:
         error: on
         audit: on
@@ -447,9 +450,9 @@ tenant:
           engine:    kv
           version:   v1
           tls:
-            key: /tmp/kes/server.key
-            cert: /tmp/kes/server.crt
-            ca: /tmp/kes/public.crt
+            key: /tmp/kes/vault.key
+            cert: /tmp/kes/vault.crt
+            ca: /tmp/kes/kubernetes.ca
           
           kubernetes:   
             engine:  kubernetes

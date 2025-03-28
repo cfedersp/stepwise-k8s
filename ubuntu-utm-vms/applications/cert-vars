@@ -1,0 +1,6 @@
+export CERT_K8S_NAMESPACE="$1"
+export CERT_HELM_RELEASE_NAME="$2"
+export CERT_SERVICE_ROOT="$2"
+export CERT_HEADLESS_SERVICE_NAME="$3"
+export K8S_CLUSTER_NAME="cluster.local"
+export CERT_NODEPORT_ROOT="$4"
