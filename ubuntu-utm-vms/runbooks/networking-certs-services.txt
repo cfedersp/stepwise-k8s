@@ -1,0 +1,783 @@
+Hostenpoint is wrong
+kubernetes auth doesn[t work
+gen ingress is wrong.
+pki is bullshit because vault uses its own certs for mTLS.
+
+Host Cleanup:
+```
+sudo security remove-trusted-cert applications/generated/certs/kubernetes.ca
+sudo rm -rf applications/generated/certs
+sudo rm -rf guest/generated
+rm ~/.kube/config
+```
+
+On VM:
+Create Volume Group for application data, change hostname
+```
+sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
+sudo /usr/share/host/vm-prep/set-hostname-clear-mid-reboot.sh master  
+```
+After reboot, enable CNI, start master, then stage copies of configs so the remaining instructions can be completed on workers and the host.
+Finally install calico and delete the original CNI config.
+```
+sudo cp /etc/cni/net.d/10-crio-bridge.conflist.disabled /etc/cni/net.d/10-crio-bridge.conflist
+sudo /usr/share/host/guest/master/start-master.sh  
+sudo /usr/share/host/guest/master/install-config.sh  
+sudo install -d /usr/share/host/guest/generated -o $(id -un) -g $(id -gn)  
+sudo install -m 664 /etc/kubernetes/admin.conf /usr/share/host/guest/generated/  
+sudo install -m 664 /etc/kubernetes/pki/ca.crt /usr/share/host/guest/generated/ 
+/usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
+
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.2/manifests/tigera-operator.yaml
+kubectl create -f guest/manifests/static/calico-custom-resources.yaml
+kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+sudo rm -rf /etc/cni/net.d/10-crio-bridge.conflist
+./guest/utils/calico-ebpf-cm.yaml.sh | kubectl create -f -
+kubectl patch ds -n kube-system kube-proxy -p '{"spec":{"template":{"spec":{"nodeSelector":{"non-calico": "true"}}}}}'
+kubectl patch installation.operator.tigera.io default --type merge -p '{"spec":{"calicoNetwork":{"linuxDataplane":"BPF"}}}'
+kubectl get installation.operator.tigera.io default -o json | jq -r '.spec.calicoNetwork.linuxDataplane'
+```
+On Host:
+Copy the kubeconfig to the default location and Start Calico
+```
+cp guest/generated/admin.conf ~/.kube/config
+```
+
+
+
+
+
+## Add workers
+From master:
+```
+/usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
+```
+On worker:
+Create Volume Group for application data, rename.
+```
+sudo /usr/share/host/vm-prep/format-logical-drive.sh nvme0n1 app-data
+sudo /usr/share/host/vm-prep/set-hostname-clear-mid-reboot.sh worker1  
+```
+After the reboot, customize the join config,
+Join the Kubernetes Cluster, make the admin keys available for CLI use, show cluster nodes.
+```
+/usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated  
+sudo kubeadm join --config ./join-config.json 
+mkdir -p ~/.kube; cp /usr/share/host/guest/generated/admin.conf ~/.kube/config  
+kubectl get nodes  
+````
+
+# Verify cluster access from the Host:
+Copy the keys required by CLI to the preferred location:  
+From your HOST Mac, dir: $PROJECTS_DIR/stepwise-k8s/ubuntu-utm-vms  
+```
+cp guest/generated/admin.conf ~/.kube/config
+kubectl get nodes
+```
+
+# Install a Storage Controller
+Create a new Storage Class for the OpenEBS provisioner, and using the "app-data" Volume Group previously created on each node.  
+Install the chart, but give values so loki doesn't use such a large disk.  
+MayaStor replication is only tested on x86-64. If you try it on apple silicon, you need to configure ARM images (loki-stack.loki.initContainers[0].image: cannot be bitnami/shell)
+Nodes with replicated storage must be labelled openebs.io/engine=mayastor
+-- kubectl label node <node_name> openebs.io/engine=mayastor
+Check its components start successfully  
+```
+kubectl apply -f guest/manifests/static/lvm-sc.yaml 
+helm install openebs --namespace openebs openebs/openebs --create-namespace --values guest/manifests/static/openebs-disable-mayastor.yaml
+kubectl get pods -n openebs
+```
+
+# Install Kafka
+Not clear how to use KRaft NodePools with our storage configuration - set default sc? Use ZK for now.
+```
+kubectl taint nodes master node-role.kubernetes.io/control-plane:NoSchedule
+
+kubectl create ns kafka
+kubectl create -f 'https://strimzi.io/install/latest?namespace=kafka' -n kafka
+
+kubectl apply -f guest/manifests/static/kafka-cluster.yaml -n kafka
+```
+# Create a personal CA for local hosting:
+```
+cd $MYCERTSHOME
+openssl rand -out random_file.rand 4096
+touch $MYCERTSHOME/geekdev.cadb
+echo '01' > serial.txt
+openssl req -x509 -config openssl-ca.conf -days 365 -newkey rsa:4096 -sha256 -out mac-hosting-ca-2025.pem -outform PEM
+openssl x509 -in mac-hosting-ca-2025.pem -text
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $MYCERTSHOME/mac-hosting-ca-2025.pem
+```
+
+# Create a personal CA for local hosting: WRONG, need CA metadata for resulting certs to work in a browwer
+https://stackoverflow.com/questions/21297139/how-do-you-sign-a-certificate-signing-request-with-your-certification-authority
+The root CA doesn't need metadata beyone a CN, which is only used internally to identify the cert.
+```
+export MYCERTSHOME=~/Library/Mobile\ Documents/com~apple~CloudDocs/Security
+openssl genrsa -out $MYCERTSHOME/mac-vms-ca-2025.key 2048
+openssl req -x509 -sha256 -key $MYCERTSHOME/mac-vms-ca-2025.key -new -out $MYCERTSHOME/mac-vms-ca-2025.crt -subj "/CN=Charlie Local Hosting 2025" -days 400
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $MYCERTSHOME/mac-vms-ca-2025.crt
+
+```
+## Create certs for trusted apps:
+https://kubernetes.io/docs/tasks/administer-cluster/certificates/
+https://stackoverflow.com/questions/21297139/how-do-you-sign-a-certificate-signing-request-with-your-certification-authority
+
+
+TLS:
+All server TLS certs have to be signed by an authority trusted by the client. 
+TLS certs should not be signed by Kubernetes because that makes no sense.
+
+Transport-level mTLS Setup:
+Client identity public certs must be trusted by servers.
+Client public cert CN and SANs may be used for authentication -it depends on the server.
+Private keys stay private, they do not have to be trusted by other parties.
+A server TLS cert can be used as an identity cert.
+
+not Transport-level mTLS:
+Vault -> Kubernetes
+Application level authentication:
+Vault authenticates to Kubernetes by passing its serviceAccount token or the serviceAccount token of the requestor.
+
+KES requires clients to have self-signed certs issued by it, and not Transport-level.
+
+
+Security vs Trust
+A single technology implements both of these, but its sloppy to conflate or intertwine them.
+Security includes rules you impose on your counter-parties. Counter-parties do not enforce your security rules on your behalf.
+Trust is a verified identity - that the counter-party is who they claim to be. 
+Identity features should be broad and security features should be tailored so the happy path narrow.
+Your security rules may include a verified identity of your counter-parties but the imposed security mechanism is a separate process from any identity verification process.
+The only intersection of security and trust is when a counter-party is authorized by me.
+
+Levels of Trust Discussion:
+I am me. I have self-signed cert and private key. If anyone else has this, they could impersonate me.
+You know my trusted public CA. I meet you and present you a cert signed by a public authority we both know.
+We both share a trusted friend. I meet you and present you a cert signed by a specific authority we both know.
+I am who I say I am - we've met before. I present you a cert that is both signed by a specific authority we both know and that you also specifically know.  (client cert in server trust store)
+I am who I say I am - we've met before and you authorized me. I present you a cert that is known to you. (client cert fingerprint in server config)
+I am who I say I am - we've met before and you authorized me. I present you a cert that is signed by you. (client cert is verified against my own)
+I am who I say I am - we've met before and you authorized me. I present you a cert that is both signed by you and that you also specifically know.(This is not needed - thats the whole point of asymmetric encryption - no store or db is required for every client.)
+
+
+Self-Signed Client Auth Cert Example (this isn't signed, so it wont meet minimum expected requirements)
+Validated: false
+SERVICE_NAME=vault
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 2048
+openssl req -x509 -new -nodes -key ${CERTDIR}/${CERTID}.key -subj "/CN=${CERT_COMMON_NAME}" -days 200 -out ${CERTDIR}/${CERTID}.pem
+
+# Theres no bundle
+# $CERTDIR/${CERTID}.key goes into client trust store and servers' trust store
+
+Client Auth Cert signed by Kubernetes:
+Validated: false
+PRODUCT_LINE=ledgerbadger
+SERVICE_NAME=vault
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${CERTID}
+./applications/gen-signature-csr-conf.sh "${CERT_COMMON_NAME}" > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+./applications/gen-clientauth-csr-yaml.sh ${PRODUCT_LINE}-${CERTID} 200 ${CERTDIR}/${CERTID}.csr> ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl create -f ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl certificate approve ${PRODUCT_LINE}-${CERTID}
+kubectl get csr ${PRODUCT_LINE}-${CERTID} -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${CERTDIR}/${PRODUCT_LINE}-${CERTID}.pem
+
+# Cert goes into servers' trust store
+# Cert plus $CERTDIR/${CERTID}.key goes into client trust store
+
+Client Auth Cert Example with SANs (not sure if we need specific SANs, but we do need a CSR that can be signed by our CA):
+Validated: false
+PRODUCT_LINE=ledgerbadger
+SERVICE_NAME=vault
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/default-ns-env default ${CERTID}
+./applications/gen-cluster-internal-csr-conf.sh "${CERT_COMMON_NAME}" clientAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key $CERTDIR/${CERTID}.key -config $CERTDIR/${CERTID}-csr.conf -out $CERTDIR/${CERTID}.csr
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.crt
+
+cp $MYCERTSHOME/ mac-hosting-ca-2025.pem $CERTDIR/${CERTID}.bundle
+cat $CERTDIR/${CERTID}.crt >> $CERTDIR/${CERTID}.bundle
+# bundle goes into servers' trust store
+# bundle plus $CERTDIR/${CERTID}.key goes into client trust store
+
+Internal-only Server TLS Cert Example:
+This is pointless. Serving certs should always include as many names as may exist so counter-parties trust the cert.
+
+FQDN Server TLS Cert Example:
+Validated: false
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=vault
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${SERVICE_NAME} $INGRESS_DNS_QUALIFIER
+./applications/gen-fully-addressable-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.crt
+# Kubernetes TLS secrets dont like bundles, so dont bother.
+
+Double duty cert (TLS and signature)
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=vault
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${SERVICE_NAME} $INGRESS_DNS_QUALIFIER
+./applications/gen-fully-addressable-csr-conf.sh ${CERTID} "clientAuth,serverAuth" > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+
+Note: 
+CSR Conf
+extendedKeyUsage can be serverAuth or clientAuth
+CSR Yaml
+signerName can be kubernetes.io/kubelet-serving or kubernetes.io/kube-apiserver-client
+usages can be: digital signature, key encipherment, server auth, client auth
+
+Not sure why kubernetes would sign a TLS cert, so lets say for now:
+Signing with kubernetes key is only required for Client Certs for clients talking to kubernetes.
+Cluster-internal Client certs dont need SANs. If something breaks we can re-evaluate this.
+
+Vault needs:
+Vault TLS Cert signed by my Local Hosting CA.
+Vault Client Cert: kubernetes ca, vault entire identity signed by kubernetes, kes public identity. wrong-incomplete! Also needs Local Hosting CA
+# hosting ca would only go here if we were using TLS certs as identity, which we aren't.
+
+KES needs:
+KES TLS either self signed or signed by my Local Hosting CA and manually generated.
+Use Local Hosting CA.
+KES Client Cert: Local Hosting CA, entire kes identity signed by Local Hosting CA, vault public tls cert (signed by kubernetes.ca)(WRONG! not needed), kubernetes.ca
+
+MinIO needs:
+MinIO TLS auto generated?
+MinIO trust store needs KES and kafka public certs
+
+Kafka needs:
+kafka TLS self signed and operator generated.
+
+Secrets:
+Vault trust store should also have kafka.crt, kes.crt, kubernetes.ca, and Local Hosting ca.
+
+KES trust store needs kes identity
+and vault public key
+and kubernetes ca.
+it only needs kafka client cert public key if this trust store is shared with minio.
+
+minio client cert secrets:
+array containing generic secrets containing kes and kafka public certs.
+MinIO identity secret needs minio identity
+and kes public key.
+and Local Hosting CA.
+
+Sample of SS cert without config: 
+openssl req -x509 -nodes -newkey rsa:4096 -keyout efs.key -out efs.cer -days 36500 -subj '/OU=EFS File Encryption Certificate/L=EFS/CN=efs' -addext 'extendedKeyUsage=1.3.6.1.4.1.311.10.3.4.1' -addext 'basicConstraints=CA:FALSE' -addext 'subjectAltName=otherName:msUPN;UTF8:sb@sb.local'
+
+client cert should have emailAddress and internalName in dn - not needed.
+extendedKeyUsage should be digitalSignature - fixed
+SANs are OK, but they can't start with a dash - fixed
+Vault identity is not signed by kubernetes. kubernetes logs will show cert error
+```
+export CERTDIR=$PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms/applications/generated/certs
+
+kubectl get cm kube-root-ca.crt -o json | jq -r '.data."ca.crt"' > $CERTDIR/kubernetes.ca
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/kubernetes.ca
+
+mkdir -p $CERTDIR/manifests
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=vault
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${SERVICE_NAME} $INGRESS_DNS_QUALIFIER
+./applications/create-k8s-serving-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+./applications/create-k8s-csr-yaml.sh ${PRODUCT_LINE}-${CERTID} 400 ${CERTDIR}/${CERTID}.csr > ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl create -f ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl certificate approve ${PRODUCT_LINE}-${CERTID}
+kubectl get csr ${PRODUCT_LINE}-${CERTID} -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${CERTDIR}/${CERTID}.pem
+ls -l ${CERTDIR}/${CERTID}.key; ls -l ${CERTDIR}/${CERTID}.pem
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca ${CERTDIR}/${CERTID}.pem
+
+# verify key and pem
+openssl rsa -check -noout -in ${CERTDIR}/${CERTID}.key
+openssl rsa -modulus -noout -in ${CERTDIR}/${CERTID}.key | openssl md5
+openssl x509 -modulus -noout -in ${CERTDIR}/${CERTID}.pem | openssl md5
+# verify SANs:
+openssl x509 -in ${CERTDIR}/${CERTID}.pem -text -noout | grep DNS
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem applications/generated/certs/vault-tls-2025.pem
+
+kubectl create secret generic vault-ha-tls \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=vault.key=applications/generated/certs/vault-tls-2025.key \
+   --from-file=vault.crt=applications/generated/certs/vault-tls-2025.pem \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca
+
+# We dont need this. vault-cli will use the tls cert and kes doesn't need client auth, just kubernetes.ca
+PRODUCT_LINE=ledgerbadger
+SERVICE_NAME=vault
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${CERTID}
+./applications/gen-signature-csr-conf.sh "${CERT_COMMON_NAME}" > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+./applications/gen-clientauth-csr-yaml.sh ${PRODUCT_LINE}-${CERTID} 200 ${CERTDIR}/${CERTID}.csr> ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl create -f ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl certificate approve ${PRODUCT_LINE}-${CERTID}
+kubectl get csr ${PRODUCT_LINE}-${CERTID} -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${CERTDIR}/${CERTID}.pem
+echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.pem
+
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca applications/generated/certs/vault-identity-2025.pem
+
+# We dont need this. kes doesn't use
+PRODUCT_LINE=ledgerbadger
+SERVICE_NAME=kes
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME}
+./applications/gen-signature-csr-conf.sh "${CERT_COMMON_NAME}" > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key $CERTDIR/${CERTID}.key -config $CERTDIR/${CERTID}-csr.conf -out $CERTDIR/${CERTID}.csr
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.pem
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem applications/generated/certs/kes-identity-2025.pem
+openssl verify -verbose -CAfile applications/generated/certs/kubernetes.ca applications/generated/certs/vault-identity-2025.pem
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem applications/generated/certs/vault-tls-2025.pem
+
+# neither of these require an identity cert
+#kubectl create secret generic vault-client-certs \
+#   -n $VAULT_K8S_NAMESPACE \
+#   --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+#   --from-file=applications/generated/certs/kes-identity-2025.pem \
+#   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca \
+#   --from-file=applications/generated/certs/vault-identity-2025.pem \
+#   --from-file=applications/generated/certs/vault-identity-2025.key
+
+# we need the CAs because Vault's TLS cert was signed by my hosting cert and Vault talks to Kubernetes
+kubectl create secret generic vault-client-certs \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca 
+
+kubectl create secret generic kes-client-certs -n ledgerbadger-prod \
+ --from-file=${CERTDIR}/kubernetes.ca \
+ --from-file=applications/generated/certs/vault-tls-2025.pem \
+ --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+ --from-file=applications/generated/certs/kes-identity-2025.pem \
+   --from-file=applications/generated/certs/kes-identity-2025.key
+
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=kes
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME} $INGRESS_DNS_QUALIFIER
+./applications/gen-fully-addressable-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+
+# echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.pem
+# cp $CERTDIR/${CERTID}.crt ${CERTDIR}/kes-tls.bundle
+# cat $MYCERTSHOME/mac-hosting-ca-2025.pem >> ${CERTDIR}/kes-tls.bundle
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem ${CERTDIR}/kes-tls-2025.pem
+# openssl verify -verbose -CAfile ${CERTDIR}/kes-tls.bundle ${CERTDIR}/${CERTID}.pem
+openssl rsa -check -noout -in ${CERTDIR}/${CERTID}.key
+openssl rsa -modulus -noout -in ${CERTDIR}/${CERTID}.key | openssl md5
+openssl x509 -modulus -noout -in ${CERTDIR}/${CERTID}.pem | openssl md5
+
+
+kubectl create secret tls kes-tls -n ledgerbadger-prod \
+--cert=applications/generated/certs/kes-tls-2025.pem \
+--key=applications/generated/certs/kes-tls-2025.key
+
+kubectl get secret my-cluster-clients-ca-cert -n kafka -o json | jq -r '.data."ca.p12"' | base64 -d > $CERTDIR/kafka-client.p12
+KAFKA_CLIENT_P12_PW=$(kubectl get secret my-cluster-clients-ca-cert -n kafka -o json | jq -r '.data."ca.password"' | base64 -d)
+keytool -list -v -keystore $CERTDIR/kafka-client.p12 -storepass $KAFKA_CLIENT_P12_PW -storetype PKCS12
+openssl pkcs12 -in $CERTDIR/kafka-client.p12 -nocerts -out $CERTDIR/kafka-client.key -passin "pass:$KAFKA_CLIENT_P12_PW"  
+openssl pkcs12 -in $CERTDIR/kafka-client.p12 -clcerts -nokeys -out $CERTDIR/kafka-client.crt -passin "pass:$KAFKA_CLIENT_P12_PW"
+
+kubectl create secret generic minio-client-certs-kafka -n ledgerbadger-prod \
+  --from-file=applications/generated/certs/kafka-client.crt 
+
+kubectl create secret generic minio-client-certs-kes -n ledgerbadger-prod \
+  --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem
+
+```
+
+# Start fresh 
+```
+export CERTDIR=$PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms/applications/generated/certs
+
+kubectl get cm kube-root-ca.crt -o json | jq -r '.data."ca.crt"' > $CERTDIR/kubernetes.ca
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $CERTDIR/kubernetes.ca
+
+mkdir -p $CERTDIR/manifests
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=vault
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${SERVICE_NAME} $INGRESS_DNS_QUALIFIER
+./applications/create-k8s-serving-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+./applications/create-k8s-csr-yaml.sh ${PRODUCT_LINE}-${CERTID} 400 ${CERTDIR}/${CERTID}.csr > ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl create -f ${CERTDIR}/manifests/${CERTID}-csr.yaml
+kubectl certificate approve ${PRODUCT_LINE}-${CERTID}
+kubectl get csr ${PRODUCT_LINE}-${CERTID} -o jsonpath='{.status.certificate}' | openssl base64 -d -A -out ${CERTDIR}/${CERTID}.pem
+ls -l ${CERTDIR}/${CERTID}.key; ls -l ${CERTDIR}/${CERTID}.pem
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca ${CERTDIR}/${CERTID}.pem
+
+# verify key and pem
+openssl rsa -check -noout -in ${CERTDIR}/${CERTID}.key
+openssl rsa -modulus -noout -in ${CERTDIR}/${CERTID}.key | openssl md5
+openssl x509 -modulus -noout -in ${CERTDIR}/${CERTID}.pem | openssl md5
+# verify SANs:
+openssl x509 -in ${CERTDIR}/${CERTID}.pem -text -noout | grep DNS
+
+openssl verify -verbose -CAfile ${CERTDIR}/kubernetes.ca applications/generated/certs/vault-tls-2025.pem
+
+kubectl create secret generic vault-ha-tls \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=vault.key=applications/generated/certs/vault-tls-2025.key \
+   --from-file=vault.crt=applications/generated/certs/vault-tls-2025.pem \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca
+
+PRODUCT_LINE=ledgerbadger
+SERVICE_NAME=kes
+CERTPURPOSE=identity
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+CERT_COMMON_NAME="${SERVICE_NAME}-${CERTPURPOSE} $(date +%Y)"
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars default ${SERVICE_NAME}
+./applications/gen-signature-csr-conf.sh "${CERT_COMMON_NAME}" > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key $CERTDIR/${CERTID}.key -config $CERTDIR/${CERTID}-csr.conf -out $CERTDIR/${CERTID}.csr
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+echo ${CERTDIR}/${CERTID}.key ${CERTDIR}/${CERTID}.pem
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem applications/generated/certs/kes-identity-2025.pem
+
+# we need the CAs because Vault's TLS cert was signed by my hosting cert and Vault talks to Kubernetes
+kubectl create secret generic vault-client-certs \
+   -n $VAULT_K8S_NAMESPACE \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca \
+   --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+   --from-file=applications/generated/certs/kes-identity-2025.pem
+
+# this makes sense, but it doesnt work
+#kubectl create secret generic kes-client-certs -n ledgerbadger-prod \
+# --from-file=${CERTDIR}/kubernetes.ca \
+# --from-file=applications/generated/certs/vault-tls-2025.pem \
+# --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+# --from-file=applications/generated/certs/kes-identity-2025.pem \
+#   --from-file=applications/generated/certs/kes-identity-2025.key
+
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=kes
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME} myminio-kes-hl-svc $INGRESS_DNS_QUALIFIER-${SERVICE_NAME}
+./applications/gen-fully-addressable-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem ${CERTDIR}/kes-tls-2025.pem
+openssl x509 -in ${CERTDIR}/${CERTID}.pem -text -noout | grep DNS
+
+
+kubectl create secret tls kes-tls -n ledgerbadger-prod \
+--key=applications/generated/certs/kes-tls-2025.key \
+--cert=applications/generated/certs/kes-tls-2025.pem 
+
+# KES cant have its own identity, so we use Vault's
+kubectl create secret generic kes-client-certs -n ledgerbadger-prod \
+ --from-file=${CERTDIR}/kubernetes.ca \
+ --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
+ --from-file=vault.key=applications/generated/certs/vault-tls-2025.key \
+ --from-file=vault.crt=applications/generated/certs/vault-tls-2025.pem 
+ 
+# minio will have the kubernetes cert, so this isn't needed
+#kubectl create secret generic minio-client-cert-kafka -n ledgerbadger-prod \
+#  --from-file=public.crt=applications/generated/certs/kafka-client.crt 
+
+# kubectl create secret generic kube-root-ca --from-literal=public.crt=$(kubectl get cm kube-root-ca.crt -n  ledgerbadger-prod -o json | jq -r '.data."ca.crt"') -n  ledgerbadger-prod
+
+kubectl create secret generic minio-client-cert-kes -n ledgerbadger-prod \
+  --from-file=public.crt=$MYCERTSHOME/mac-hosting-ca-2025.pem
+
+
+PRODUCT_LINE=ledgerbadger
+CERTPURPOSE=tls
+SERVICE_NAME=minio
+CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
+INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
+openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
+source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME} myminio-hl $INGRESS_DNS_QUALIFIER-${SERVICE_NAME}
+./applications/gen-fully-addressable-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
+openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
+
+cd $MYCERTSHOME/
+openssl ca -cert mac-hosting-ca-2025.pem -keyfile cakey.pem \
+   -config $MYCERTSHOME/openssl-ca.conf -policy signing_policy -extensions signing_req -out ${CERTDIR}/${CERTID}.pem -infiles ${CERTDIR}/${CERTID}.csr
+cd $PROJECTS_HOME/stepwise-k8s/ubuntu-utm-vms
+
+openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem ${CERTDIR}/minio-tls-2025.pem
+
+
+kubectl create secret generic minio-tls -n ledgerbadger-prod \
+--from-file=private.key=applications/generated/certs/minio-tls-2025.key \
+--from-file=public.crt=applications/generated/certs/minio-tls-2025.pem 
+
+```
+
+# Restart Calico-Nodes:
+https://devopscube.com/clusterinformation-connection-unauthorized/
+```
+kubectl delete pod -l k8s-app=calico-node -n calico-system 
+```
+# Summarize:
+Service Accounts, Cluster Role Bindings, Vault Roles
+vault-sa: Assigned to Vault pods, bound to ClusterRole system:auth-delegator, no Vault Role
+minio-kes-sa: Assigned to minio and kes, no ClusterRole, has VaultRole minio-ledgerbadger-kes-role, which is governed by kubernetes auth and grants access to any v1 keys.
+my-apps-sa: Assigned to single test pod, no ClusterRole, has VaultRole database, which is governed by kubernetes auth and grants access to the db-pass secret.
+
+# Install vault
+Do not use port 8201 to join! Only vault uses that.
+```
+helm repo add hashicorp https://helm.releases.hashicorp.com
+kubectl apply -f guest/manifests/static/vault-sa.yaml
+
+helm repo add secrets-store-csi-driver https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm install vault-csi secrets-store-csi-driver/secrets-store-csi-driver \
+    --set syncSecret.enabled=true
+
+helm install vault hashicorp/vault --values guest/helm-values/vault.yaml 
+
+export INITIAL_VAULT_NODE="vault-0"
+kubectl exec $INITIAL_VAULT_NODE -- ls /etc/ssl/certs/
+kubectl exec $INITIAL_VAULT_NODE -- ls /vault/userconfig/vault-ha-tls/
+
+# -ca-cert="$MYCERTSHOME/mac-vms-ca-2025.crt"
+kubectl exec $INITIAL_VAULT_NODE -- vault operator init -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" -key-shares=1 -key-threshold=1 -format=json > applications/generated/cluster-keys.json
+
+sudo chown root applications/generated/cluster-keys.json
+sudo chmod go-rw applications/generated/cluster-keys.json
+VAULT_UNSEAL_KEY=$(sudo jq -r ".unseal_keys_b64[]" applications/generated/cluster-keys.json)
+kubectl exec $INITIAL_VAULT_NODE -- vault operator unseal -address "https://$INITIAL_VAULT_NODE.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
+echo "Now have the other instances join the first"
+
+kubectl exec -it vault-1 -- vault operator raft join -address=https://vault-1.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://$INITIAL_VAULT_NODE.vault-internal:8200
+
+kubectl exec vault-1 -- vault operator unseal -address "https://vault-1.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
+
+kubectl exec -it vault-2 -- vault operator raft join -address=https://vault-2.vault-internal:8200 -leader-ca-cert="@/etc/ssl/certs/kubernetes.ca" -leader-client-cert="@/vault/userconfig/vault-ha-tls/vault.crt" -leader-client-key="@/vault/userconfig/vault-ha-tls/vault.key" https://$INITIAL_VAULT_NODE.vault-internal:8200
+
+kubectl exec vault-2 -- vault operator unseal -address "https://vault-2.vault-internal.default.svc.cluster.local:8200" $VAULT_UNSEAL_KEY
+kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
+```
+
+# Expose Vault with Calico Global Network policies
+```
+kubectl apply -f guest/manifests/static/network-policies.yaml
+./applications/gen-ingress-policy.sh allow-ledgerbadger-vault | kubectl create -f -
+VAULT_PORT=$(kubectl get svc ledgerbadger-vault -o json | jq -r '.spec.ports[0].nodePort')
+VAULT_FQDN_IN_HOSTS="ledgerbadger-vault.default.svc.cluster.local"
+# Any FQDN will work as long as its in the hosts file and the cert as long as you use the NodePort's external port. Ex: vault.default.svc.cluster.local,
+VAULT_ADDR="https://$VAULT_FQDN_IN_HOSTS:$VAULT_PORT"
+echo $VAULT_ADDR
+echo "Make sure your hosts file points to a valid node ip"
+cat /etc/hosts
+
+vault status -address="$VAULT_ADDR" -ca-cert="${CERTDIR}/kubernetes.ca"
+export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
+vault login -address="$VAULT_ADDR" $CLUSTER_ROOT_TOKEN
+vault operator raft  list-peers -address="$VAULT_ADDR" -ca-cert="${CERTDIR}/kubernetes.ca"
+```
+How to narrow the source network CIDR in the ingress policy?
+
+# Create KES identities for admin and minio
+```
+mkdir -p ${CERTDIR}/miniokes/
+kes identity new --key=${CERTDIR}/miniokes/minio-ledgerbadger-prod.key --cert=${CERTDIR}/miniokes/minio-ledgerbadger-prod.crt minio-ledgerbadger-prod > $CERTDIR/miniokes/minio-kes-id.txt
+kes identity of ${CERTDIR}/miniokes/minio-ledgerbadger-prod.crt
+
+mkdir -p ${CERTDIR}/kesadmins/
+kes identity new --key=${CERTDIR}/kesadmins/charlie-kes-prod.key --cert=${CERTDIR}/kesadmins/charlie-kes-prod.crt charlie-kes-prod > $CERTDIR/kesadmins/charlie-kes-admin-id.txt
+
+cat $WORKDIR/kesadmins/charlie-kes-admin-id.txt
+# update minio-tenant.yaml with the admin user identity (line 422)
+cat  $CERTDIR/miniokes/minio-kes-id.txt
+# update minio-tenant.yaml with the minio user identity (line 443)
+
+kubectl create secret generic minio-ledgerbadger-prod-kes-cred \
+   -n ledgerbadger-prod \
+   --from-file=minio-kes.key=${CERTDIR}/miniokes/minio-ledgerbadger-prod.key \
+   --from-file=minio-kes.crt=${CERTDIR}/miniokes/minio-ledgerbadger-prod.crt
+```
+
+# Enable Vault UI
+```
+export CLUSTER_ROOT_TOKEN=$(sudo cat applications/generated/cluster-keys.json | jq -r ".root_token")
+vault login -address="$VAULT_ADDR" $CLUSTER_ROOT_TOKEN
+vault policy write admin guest/vault-policies/admin.hcl
+
+vault auth enable -address "$VAULT_ADDR" userpass 
+vault write -address "$VAULT_ADDR" auth/userpass/users/charlie policies=admin password=vault@1
+echo $VAULT_ADDR/ui
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome $VAULT_ADDR/ui
+```
+
+# Allow KES to access Vault
+```
+vault secrets enable -address "$VAULT_ADDR" -version=1 kv
+kubectl create serviceaccount minio-kes-sa -n ledgerbadger-prod
+
+# OK to create both, I would prefer the 2nd, but use V1 for now
+# KV version 1:
+vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes-v1 - <<EOF
+path "kv/*" {
+   capabilities = [ "create", "read", "delete", "list" ]
+}
+EOF
+
+# KV version 2:
+vault policy write  -address "$VAULT_ADDR" minio-ledgerbadger-kes-v2 - <<EOF
+path "kv/data/*" {
+   capabilities = [ "create", "read" ]
+}
+path "kv/metadata/*" {
+   capabilities = [ "delete", "list" ]
+}
+EOF
+
+vault auth enable -address "$VAULT_ADDR" kubernetes 
+# KUBERNETES_MASTER_HOST_IP: "$(ifconfig enp0s1 | grep 'inet ' | awk '{print $2}')"
+# KUBERNETES_CLUSTER_IP=$(kubectl get svc kubernetes -o json | jq -r '.spec.clusterIP')
+KUBERNETES_SERVICE_DNS="kubernetes.default.svc"
+KUBERNETES_SERVICE_CLUSTER_IP=$(kubectl get svc kubernetes -o json | jq -r '.spec.clusterIP')
+KUBERNETES_PORT=$(kubectl get svc kubernetes -o json | jq -r '.spec.ports[0].port')
+KUBERNETES_ENDPOINT="https://$KUBERNETES_SERVICE_CLUSTER_IP:$KUBERNETES_PORT"
+KUBERNETES_ENDPOINT="https://$KUBERNETES_SERVICE_DNS:$KUBERNETES_PORT"
+# KUBERNETES_CA_CERT=$(cat ${CERTDIR}/kubernetes.ca)
+# kubernetes_ca_cert="$KUBERNETES_CA_CERT"
+# disable_local_ca_jwt="true"
+vault write -address "$VAULT_ADDR" auth/kubernetes/config kubernetes_host="https://192.168.64.27:6443"  
+
+vault write -address "$VAULT_ADDR" auth/kubernetes/role/minio-ledgerbadger-kes-role \
+    bound_service_account_names=minio-kes-sa \
+    bound_service_account_namespaces=ledgerbadger-prod \
+    policies=minio-ledgerbadger-kes-v1 \
+    ttl=20m 
+
+kubectl apply -f guest/manifests/static/minio-kes-sa-secret.yaml -n ledgerbadger-prod
+TOKEN_REVIEW_JWT=$(kubectl get secret minio-kes-sa -n ledgerbadger-prod -o json | jq -r '.data.token' | base64 --decode) 
+echo $TOKEN_REVIEW_JWT | pbcopy
+kubectl exec -it my-cluster-kafka-0   -n kafka -- /bin/sh
+curl --cacert /tmp/kubernetes.ca --request POST --data '{"jwt": "'eyJhbGciOiJSUzI1NiIsImtpZCI6IkV2THRUdUpmWDR1RUxSbDRVQXZZVXpCWktndUIxSjVYNUFteThTZk5JeHcifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJsZWRnZXJiYWRnZXItcHJvZCIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VjcmV0Lm5hbWUiOiJtaW5pby1rZXMtc2EiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoibWluaW8ta2VzLXNhIiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZXJ2aWNlLWFjY291bnQudWlkIjoiNzg3ODE1M2MtMTk0MC00MWI2LTkyZDEtZjNmOThiMjk5MjI3Iiwic3ViIjoic3lzdGVtOnNlcnZpY2VhY2NvdW50OmxlZGdlcmJhZGdlci1wcm9kOm1pbmlvLWtlcy1zYSJ9.XdaLJFMU0TlfYwSz1g1fq51bXAD1qFe_oB9z_xaCSoiFFeAUMJjt-FDrYFz-ajFK57bZje467TIbw6HYb1AewQcbRSpW8JdkcGLOspwCl8PTgWFzcFsgo60w24jViCIOrFIHjDvumpnmBRx9xe1tT9aig41bHqeLrdzvcj3tmmH2UIEhRkPmuu0eeNTnSLuxXX05Yti-9Hqb9VyI53t7AByn5mJupIuYNXAW0rBmYYY4ZVV3Atppd2vfetbPqX79Q5a_qQ7sCyXU-Np6mwlMH7Fe2Zlg3GLzxoj-iJL1PqX8-8e2eXD2VlOByKud-hb8zHhPmuiDD-ax6pMyEKgXyA'", "role": "minio-ledgerbadger-kes-role"}' https://vault.default.svc:8200/v1/auth/kubernetes/login
+
+```
+# Deploy a pod with a secret that is mounted as a Volume (requires spc)
+```
+vault secrets enable -path=secret kv-v2 
+vault kv put -address "$VAULT_ADDR" secret/db-pass password="db-secret-password"
+
+vault read -address "$VAULT_ADDR" auth/kubernetes/config
+
+vault policy write internal-app - <<EOF
+path "secret/data/db-pass" {
+  capabilities = ["read"]
+}
+EOF
+
+kubectl create serviceaccount my-apps-sa
+kubectl get secret my-apps-sa -o yaml
+
+vault write -address "$VAULT_ADDR" auth/kubernetes/role/database \
+    bound_service_account_names=my-apps-sa \
+    bound_service_account_namespaces=default \
+    policies=internal-app \
+    ttl=20m 
+
+# Check root cert is in place
+kubectl exec vault-csi-provider-4ps9z -- ls /vault/tls
+vault list -address "$VAULT_ADDR" auth/kubernetes/role
+kubectl apply -f guest/manifests/static/vault-database-spc.yaml
+
+kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml 
+kubectl describe pod webapp
+kubectl exec webapp -- cat /mnt/secrets-store/db-password
+
+TOKEN_REVIEW_JWT=$(kubectl get secret my-apps-sa -o json | jq -r '.data.token' | base64 --decode) 
+echo $TOKEN_REVIEW_JWT| pbcopy
+curl --cacert /tmp/kubernetes.ca --request POST --data '{"jwt": "'eyJhbGciOiJSUzI1NiIsImtpZCI6IkV2THRUdUpmWDR1RUxSbDRVQXZZVXpCWktndUIxSjVYNUFteThTZk5JeHcifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6Im15LWFwcHMtc2EiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoibXktYXBwcy1zYSIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VydmljZS1hY2NvdW50LnVpZCI6ImRjNTg5NjNkLTA2MTQtNGJiNC1hYjZlLWRhMDY4MjY0NjQ5YSIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0Om15LWFwcHMtc2EifQ.ezEHIFGS_lzJZ55gDiGIQB8LAoCtUejoT3Aj_e37c7rQ5FAD33u-fOJxr_NhySAivxlc8dGR2E6idEjDHDUx4DKRCAoUojDxoB7cLxaAcL4AazoqXN30ayQB_h-X3xHrX-GBwc2vgUHnMCky5b-R2VoYjgja9hi6xtxbT-S12bUDamFUokHnG08hhVSNzwTb5u8DML8Dhi-tbzlKZCEBG1zxwuJLaxaPmG1yk7Wb7ZrtEOW2-GVYzQPs7IwDH709zxMJf1qvXJTrh9y7pvlsJVO38LO1Ipao8slU5_Ghdd5WcPfZzfN-P_YRmsYT4ptsyTxJq_fKvceGqBS___VYYA'", "role": "database"}' https://vault.default.svc:8200/v1/auth/kubernetes/login
+```
+
+# Install Minio Object store
+```
+helm repo add minio-operator https://operator.min.io
+kubectl create ns minio-operator
+kubectl create secret generic operator-ca-tls  --from-file=public.crt=$MYCERTSHOME/mac-hosting-ca-2025.pem -n minio-operator
+helm install --namespace minio-operator minio-operator minio-operator/operator --set image.tag=v7.0.1
+
+MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY="my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"\nexport MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY="MINIO-BUCKET-NOTIFICATIONS"\nexport MINIO_ROOT_USER="minio"\nexport MINIO_ROOT_PASSWORD="minio123"\nexport MINIO_KMS_KES_CERT_FILE="/kes/minio-kes.crt"\nexport MINIO_KMS_KES_KEY_FILE="/kes/minio-kes.key"\nexport MINIO_KMS_KES_KEY_NAME="minio-ledgerbadger-prod"')
+
+kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
+
+helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
+```
+
+# Cleanup MinIO, if needed
+Why do we need to use helm to create and delete a custom resource?
+```
+helm uninstall ledgerbadger-prod -n ledgerbadger-prod
+
+# helm uninstall -n minio-operator minio-operator
+```
+
