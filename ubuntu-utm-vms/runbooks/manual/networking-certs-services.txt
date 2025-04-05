@@ -624,6 +624,7 @@ kubectl apply -f guest/manifests/static/ledgerbadger-vault-svc.yaml
 ```
 
 # Expose Vault with Calico Global Network policies
+https://docs.tigera.io/calico/latest/network-policy/services/kubernetes-node-ports
 ```
 kubectl apply -f guest/manifests/static/network-policies.yaml
 ./applications/gen-ingress-policy.sh allow-ledgerbadger-vault | kubectl create -f -
@@ -641,6 +642,17 @@ vault login -address="$VAULT_ADDR" $CLUSTER_ROOT_TOKEN
 vault operator raft  list-peers -address="$VAULT_ADDR" -ca-cert="${CERTDIR}/kubernetes.ca"
 ```
 How to narrow the source network CIDR in the ingress policy?
+
+# Calico Policy Demo
+https://docs.tigera.io/calico/latest/network-policy/get-started/calico-policy/calico-policy-tutorial
+```
+kubectl create ns advanced-policy-demo
+kubectl create deployment --namespace=advanced-policy-demo nginx --image=nginx
+kubectl expose --namespace=advanced-policy-demo deployment nginx --port=80
+
+kubectl run --namespace=advanced-policy-demo access --rm -ti --image busybox /bin/sh
+```
+
 
 # Create KES identities for admin and minio
 ```
@@ -739,6 +751,7 @@ EOF
 kubectl create serviceaccount my-apps-sa
 kubectl get secret my-apps-sa -o yaml
 
+vault list -address "$VAULT_ADDR" auth/kubernetes/role
 vault write -address "$VAULT_ADDR" auth/kubernetes/role/database \
     bound_service_account_names=my-apps-sa \
     bound_service_account_namespaces=default \
@@ -747,7 +760,6 @@ vault write -address "$VAULT_ADDR" auth/kubernetes/role/database \
 
 # Check root cert is in place
 kubectl exec vault-csi-provider-4ps9z -- ls /vault/tls
-vault list -address "$VAULT_ADDR" auth/kubernetes/role
 kubectl apply -f guest/manifests/static/vault-database-spc.yaml
 
 kubectl apply -f guest/manifests/static/secret-mounting-pod.yaml 
@@ -757,6 +769,15 @@ kubectl exec webapp -- cat /mnt/secrets-store/db-password
 TOKEN_REVIEW_JWT=$(kubectl get secret my-apps-sa -o json | jq -r '.data.token' | base64 --decode) 
 echo $TOKEN_REVIEW_JWT| pbcopy
 curl --cacert /tmp/kubernetes.ca --request POST --data '{"jwt": "'eyJhbGciOiJSUzI1NiIsImtpZCI6IkV2THRUdUpmWDR1RUxSbDRVQXZZVXpCWktndUIxSjVYNUFteThTZk5JeHcifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6Im15LWFwcHMtc2EiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoibXktYXBwcy1zYSIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VydmljZS1hY2NvdW50LnVpZCI6ImRjNTg5NjNkLTA2MTQtNGJiNC1hYjZlLWRhMDY4MjY0NjQ5YSIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0Om15LWFwcHMtc2EifQ.ezEHIFGS_lzJZ55gDiGIQB8LAoCtUejoT3Aj_e37c7rQ5FAD33u-fOJxr_NhySAivxlc8dGR2E6idEjDHDUx4DKRCAoUojDxoB7cLxaAcL4AazoqXN30ayQB_h-X3xHrX-GBwc2vgUHnMCky5b-R2VoYjgja9hi6xtxbT-S12bUDamFUokHnG08hhVSNzwTb5u8DML8Dhi-tbzlKZCEBG1zxwuJLaxaPmG1yk7Wb7ZrtEOW2-GVYzQPs7IwDH709zxMJf1qvXJTrh9y7pvlsJVO38LO1Ipao8slU5_Ghdd5WcPfZzfN-P_YRmsYT4ptsyTxJq_fKvceGqBS___VYYA'", "role": "database"}' https://vault.default.svc:8200/v1/auth/kubernetes/login
+```
+
+# Vault Injector
+https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-sidecar
+```
+kubectl apply -f guest/manifests/static/injector-secret-mounting-deployment.yaml
+kubectl exec \
+      $(kubectl get pod -l app=orgchart -o jsonpath="{.items[0].metadata.name}") \
+      -c orgchart -- cat /vault/secrets/database-config.txt
 ```
 
 # Install Minio Object store
