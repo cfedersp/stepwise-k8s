@@ -11,12 +11,15 @@ k8sImages=$(docker image ls --filter=reference='registry.k8s.io/sig-storage/*' -
 
 MANIFESTDIR=$INITIALDIR/../guest/manifests/static/
 
-cd host-prep/originals/charts
+cd host-prep/original-reference/charts
 helm pull grafana/loki
 tar -xzf loki*
 
 helm pull minio-operator/operator
 tar -xzf operator-*
 mv operator minio-operator
+
+helm pull jetstack/cert-manager
+tar -xzf cert-manager-*
 
 cd ../../../

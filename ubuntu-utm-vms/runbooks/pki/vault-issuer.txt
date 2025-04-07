@@ -1,0 +1,86 @@
+https://genekuo.medium.com/using-hashicorp-vault-as-certificate-manager-on-a-kubernetes-cluster-155604d39a60
+https://cert-manager.io/docs/configuration/
+https://cert-manager.io/docs/concepts/issuer/
+https://cert-manager.io/docs/configuration/vault/
+
+Cert Manager integrates with any ACME CA. 
+It performs the following automatically:
+
+It can also host a callback endpoint that allows it to react to "Challenges" from an ACME server: verifying domain ownership by updating DNS entries.
+Vault is an ACME CA.
+
+```
+vault secrets enable pki
+vault secrets tune -max-lease-ttl=8760h pki
+vault write -format=json pki/root/generate/internal \
+    common_name="Demo Root Certificate Authority" > /tmp/demo-root-ca.json
+cat /tmp/demo-root-ca.json
+
+vault write pki/root/generate/internal \
+    common_name=example.com ttl=8760h
+
+vault write pki/config/urls \
+issuing_certificates="https://vault.default:8200/v1/pki/ca" \
+crl_distribution_points="https://vault.default:8200/v1/pki/crl"
+
+vault write pki/roles/example-dot-com \
+    key_type=any \
+    allowed_domains=example.com \
+    allow_subdomains=true \
+    max_ttl=5m
+
+vault policy write pki - <<EOF
+path "pki*" { capabilities = ["read", "list"] }
+path "pki/roles/example-dot-com"   { capabilities = ["create", "update"] }
+path "pki/sign/example-dot-com"    { capabilities = ["create", "update"] }
+path "pki/issue/example-dot-com"   { capabilities = ["create"] }
+EOF
+
+vault write auth/kubernetes/role/issuer \
+    bound_service_account_names=issuer \
+    bound_service_account_namespaces=cert-manager,default \
+    policies=pki \
+    ttl=20m
+
+
+kubectl create ns cert-manager
+# this needs vault certs for mTLS
+helm install cert-manager jetstack/cert-manager --namespace cert-manager \
+    --set crds.enabled=true \
+    --set "cainjector.image.repository=quay.io/jetstack/cert-manager-cainjector-arm64" \
+    --set "cainjector.volumes[0].name=kubernetes-ca" \
+    --set "cainjector.volumes[0].configMap.name=kube-root-ca.crt" \
+    --set "cainjector.volumeMounts[0].name=kubernetes-ca" \
+    --set "cainjector.volumeMounts[0].mountPath=/etc/ssl/certs"
+
+    --set startupapicheck.timeout=5m --set installCRDs=true --set global.leaderElection.namespace=cert-manager
+
+kubectl create serviceaccount issuer -n cert-manager
+
+kubectl create secret generic vault-ha-tls \
+   -n cert-manager \
+   --from-file=vault.key=applications/generated/certs/vault-tls-2025.key \
+   --from-file=vault.crt=applications/generated/certs/vault-tls-2025.pem \
+   --from-file=kubernetes.ca=${CERTDIR}/kubernetes.ca
+
+kubectl create -f runbooks/pki/manifests/issuer-sa-token-secret.yaml -n cert-manager
+
+kubectl create -f runbooks/pki/manifests/vault-cluster-issuer.yaml 
+kubectl create -f runbooks/pki/manifests/example-vault-cert.yaml 
+
+```
+
+Clean up:
+```
+helm uninstall cert-manager --namespace cert-manager
+```
+caBundleSecretRef:
+      name: kube-root-ca.crt 
+      key: ca.crt
+
+
+Trust Manager:
+jetstack/trust-manager
+```
+
+```

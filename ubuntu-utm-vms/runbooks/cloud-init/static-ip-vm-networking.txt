@@ -1,0 +1,90 @@
+Background: read networking comments and existing cloud-init scripts
+sudo cat /etc/netplan/50-cloud-init.yaml (states changes here wont persist across reboots)
+ls /etc/cloud/cloud.cfg.d/ (shows that cloud-init's network config capability is not disabled)
+ls /etc/cloud/cloud-init.disabled (shows that cloud init was entirely disabled)
+cat /etc/cloud/cloud.cfg.d/README
+sudo cat /etc/cloud/cloud.cfg.d/90-installer-network.cfg (probably the file we want to define our networking settings)
+
+Network Manager vs networkd
+netplan vs ??
+networkd is newer than NetworkManager
+My instances use networkd.
+Below config is for netplan.
+Changing to a static ip using cloud-init and netplan apply fuck up landscape-sysinfo and the kubernetes node loses its IPV4 address in favor of IPV6. The VM still has a IPV4 address.
+ifconfig enp0s1 fucks up the VMs IPv4 address and it just has an interface with no IP.
+netplan can render rules for either, thats why we specify the renderer in any new config.
+
+Inspect some stuff:
+```
+nmcli device show
+nc -zv 192.168.64.1 53
+```
+
+Manual:
+paste echo command that writes to /etc/cloud/cloud.cfg.d/90-installer-network.cfg or higher.
+Must be root since owner and group permissions for cloud.cfg are different. not sure netplan apply persists across reboots, so we'll re-enable cloud-init.
+```
+sudo su root
+IP_ADDRESS=$(ifconfig enp0s1 | grep 'inet ' | awk '{print $2}')
+echo -e "network:\n  version: 2\n  renderer: networkd\n  ethernets:\n    enp0s1:\n      dhcp4: false\n      addresses:\n        - $IP_ADDRESS/24\n      nameservers:\n        search: [.]\n        addresses: [192.168.64.1]\n      routes:\n        - to: default\n          via: 192.168.64.1" > /etc/cloud/cloud.cfg.d/91-installer-network.cfg 
+cat /etc/cloud/cloud.cfg.d/91-installer-network.cfg
+rm /etc/cloud/cloud-init.disabled
+shutdown -r
+```
+After restart:
+```
+# sudo netplan generate
+# sudo netplan apply
+sudo touch /etc/cloud/cloud-init.disabled
+```
+
+Revert:
+```
+sudo su root
+echo -e "network:\n  version: 2\n  renderer: networkd\n  ethernets:\n    enp0s1:\n      dhcp4: true" > /etc/cloud/cloud.cfg.d/90-installer-network.cfg 
+rm /etc/cloud/cloud.cfg.d/91-installer-network.cfg 
+netplan apply
+shutdown -r
+```
+
+Cloud-init injection techniques: not needed
+9pnet_virtio share mount (requires reactivating cloud-init)
+copy files in /etc/cloud/cloud.cfg.d/ to the repo's host-specific dir.
+configure VM with a share to one of the host dirs.
+boot the VM.
+mount the share device.
+re-activate cloud-init
+restart the VM.
+
+First add netplan configs to the repo, one per folder.
+Then create a VM with a share pointing to one of those folders.
+Mount the share.
+Restart the VM.
+Confirm it has that static ip address.
+Shutdown the VM.
+Clone the VM.
+
+
+network:
+  version: 2
+  ethernets:
+    enp0s1:
+      dhcp4: false
+      addresses:
+        - 192.168.64.30/24
+      nameservers:
+        search: [.]
+        addresses: 192.168.64.1
+      routes:
+        - to: 192.168.64.1/24
+          via: 192.168.64.1
+    cali8015edf118@f2:
+      dhcp4: false
+      addresses:
+        - 10.85.0.0/16
+        - 10.96.0.0/16
+      nameservers:
+        search: [cluster.local]
+        addresses: $(kubectl get svc -n kube-system -o json | jq -r '.items[0].spec.clusterIP')
+
+sudo ifconfig enp0s1 192.168.64.27  netmask 255.255.255.0
