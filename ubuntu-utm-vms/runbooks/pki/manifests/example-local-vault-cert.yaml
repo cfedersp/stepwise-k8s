@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: demo-example-cluster-local
+spec:
+  secretName: example-cluster-local-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-issuer
+  commonName: demo.default.svc.cluster.local
+  dnsNames:
+    - demo.default.svc.cluster.local
+    - demo.default.svc
+    - demo.default

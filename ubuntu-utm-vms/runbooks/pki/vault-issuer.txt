@@ -10,25 +10,41 @@ It can also host a callback endpoint that allows it to react to "Challenges" fro
 Vault is an ACME CA.
 
 ```
+export MYCERTSHOME=~/Library/Mobile\ Documents/com~apple~CloudDocs/Security
+
+cp ${CERTDIR}/kubernetes.ca ${CERTDIR}/trust-ca.bundle
+cat $MYCERTSHOME/mac-hosting-ca-2025.pem >> ${CERTDIR}/trust-ca.bundle
+
+kubectl create secret generic trust-ca-bundle -n cert-manager \
+--from-file=${CERTDIR}/trust-ca.bundle
+
+
 vault secrets enable pki
 vault secrets tune -max-lease-ttl=8760h pki
-vault write -format=json pki/root/generate/internal \
+vault write -address="$VAULT_ADDR" -format=json pki/root/generate/internal \
     common_name="Demo Root Certificate Authority" > /tmp/demo-root-ca.json
 cat /tmp/demo-root-ca.json
 
-vault write pki/root/generate/internal \
+vault write -address="$VAULT_ADDR" pki/root/generate/internal \
     common_name=example.com ttl=8760h
 
-vault write pki/config/urls \
+vault write -address="$VAULT_ADDR" pki/config/urls \
 issuing_certificates="https://vault.default:8200/v1/pki/ca" \
 crl_distribution_points="https://vault.default:8200/v1/pki/crl"
 
-vault write pki/roles/example-dot-com \
+vault write -address="$VAULT_ADDR" pki/roles/example-dot-com \
     key_type=any \
-    allowed_domains=example.com \
+    allow_any_name=true \
+    allow_ip_sans=true \
     allow_subdomains=true \
+    allow_localhost=true \
+    allow_bare_domains=true \
+    allow_glob_domains=true \
+    allowed_domains="cluster.local" \
     max_ttl=5m
-
+#     allowed_dns_sans=["example.default.svc.cluster.local","example.default.svc","example.default","example"] \ # Default to any
+# allow_subdomains=true  # Dont know why this doesn't work
+    
 vault policy write pki - <<EOF
 path "pki*" { capabilities = ["read", "list"] }
 path "pki/roles/example-dot-com"   { capabilities = ["create", "update"] }
@@ -44,17 +60,26 @@ vault write auth/kubernetes/role/issuer \
 
 
 kubectl create ns cert-manager
-# this needs vault certs for mTLS
+# The volumn mounts probably aren't needed
 helm install cert-manager jetstack/cert-manager --namespace cert-manager \
     --set crds.enabled=true \
     --set "cainjector.image.repository=quay.io/jetstack/cert-manager-cainjector-arm64" \
+    --set "volumes[0].name=kubernetes-ca" \
+    --set "volumes[0].configMap.name=kube-root-ca.crt" \
+    --set "volumeMounts[0].name=kubernetes-ca" \
+    --set "volumeMounts[0].mountPath=/etc/ssl/certs" \
     --set "cainjector.volumes[0].name=kubernetes-ca" \
     --set "cainjector.volumes[0].configMap.name=kube-root-ca.crt" \
     --set "cainjector.volumeMounts[0].name=kubernetes-ca" \
-    --set "cainjector.volumeMounts[0].mountPath=/etc/ssl/certs"
+    --set "cainjector.volumeMounts[0].mountPath=/etc/ssl/certs" \
+    --set "webhook.volumes[0].name=kubernetes-ca" \
+    --set "webhook.volumes[0].configMap.name=kube-root-ca.crt" \
+    --set "webhook.volumeMounts[0].name=kubernetes-ca" \
+    --set "webhook.volumeMounts[0].mountPath=/etc/ssl/certs"
 
     --set startupapicheck.timeout=5m --set installCRDs=true --set global.leaderElection.namespace=cert-manager
 
+# The issuer isn't scoped but the remaining 4 things go together in same namespace
 kubectl create serviceaccount issuer -n cert-manager
 
 kubectl create secret generic vault-ha-tls \
@@ -65,8 +90,11 @@ kubectl create secret generic vault-ha-tls \
 
 kubectl create -f runbooks/pki/manifests/issuer-sa-token-secret.yaml -n cert-manager
 
-kubectl create -f runbooks/pki/manifests/vault-cluster-issuer.yaml 
-kubectl create -f runbooks/pki/manifests/example-vault-cert.yaml 
+#./runbooks/pki/manifests/vault-cluster-issuer-line.sh default kube-root-ca.crt | kubectl create -f -
+kubectl create -f runbooks/pki/manifests/vault-cluster-issuer.yaml -n cert-manager 
+kubectl create -f runbooks/pki/manifests/example-vault-cert.yaml -n cert-manager 
+kubectl create -f runbooks/pki/manifests/example-local-vault-cert.yaml -n cert-manager 
+
 
 ```
 

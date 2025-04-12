@@ -1,0 +1,24 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: vault-issuer
+spec:
+  vault:
+    server: https://vault.default:8200
+    path: pki/sign/example-dot-com
+    clientCertSecretRef:
+      name: vault-ha-tls
+      key: vault.crt
+    clientKeySecretRef:
+      name: vault-ha-tls
+      key: vault.key
+    caBundleSecretRef:
+      key: trust-ca.bundle
+      name: trust-ca-bundle
+    auth:
+      kubernetes:
+        mountPath: /v1/auth/kubernetes
+        role: issuer
+        secretRef:
+          name: issuer-token
+          key: token
