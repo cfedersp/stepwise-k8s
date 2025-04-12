@@ -158,7 +158,7 @@ I am who I say I am - we've met before. I present you a cert that is both signed
 I am who I say I am - we've met before and you authorized me. I present you a cert that is known to you. (client cert fingerprint in server config)
 I am who I say I am - we've met before and you authorized me. I present you a cert that is signed by you. (client cert is verified against my own)
 I am who I say I am - we've met before and you authorized me. I present you a cert that is both signed by you and that you also specifically know.(This is not needed - thats the whole point of asymmetric encryption - no store or db is required for every client.)
-
+I am bound to only ever communicate with 1 server. This is an edge case where the client has the server key.
 
 Self-Signed Client Auth Cert Example (this isn't signed, so it wont meet minimum expected requirements)
 Validated: false
@@ -505,7 +505,7 @@ kubectl create secret generic vault-client-certs \
    --from-file=$MYCERTSHOME/mac-hosting-ca-2025.pem \
    --from-file=applications/generated/certs/kes-identity-2025.pem
 
-# this makes sense, but it doesnt work
+# this makes sense, but it doesnt work for KES. try using it for cert-manager
 #kubectl create secret generic kes-client-certs -n ledgerbadger-prod \
 # --from-file=${CERTDIR}/kubernetes.ca \
 # --from-file=applications/generated/certs/vault-tls-2025.pem \
@@ -559,7 +559,8 @@ SERVICE_NAME=minio
 CERTID="${SERVICE_NAME}-${CERTPURPOSE}-$(date +%Y)"
 INGRESS_DNS_QUALIFIER=$PRODUCT_LINE
 openssl genrsa -out ${CERTDIR}/${CERTID}.key 4096
-source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME} myminio-hl $INGRESS_DNS_QUALIFIER-${SERVICE_NAME}
+# DONT include the INGRESS_DNS_QUALIFIER/PRODUCT_LINE as a service name if the product line is already reflected in the namespace!
+source applications/cert-vars ledgerbadger-prod ${SERVICE_NAME} myminio-hl myminio
 ./applications/gen-fully-addressable-csr-conf.sh ${CERTID} serverAuth > ${CERTDIR}/${CERTID}-csr.conf
 openssl req -new -key ${CERTDIR}/${CERTID}.key -config ${CERTDIR}/${CERTID}-csr.conf -out ${CERTDIR}/${CERTID}.csr
 
@@ -574,6 +575,7 @@ openssl verify -verbose -CAfile $MYCERTSHOME/mac-hosting-ca-2025.pem ${CERTDIR}/
 kubectl create secret generic minio-tls -n ledgerbadger-prod \
 --from-file=private.key=applications/generated/certs/minio-tls-2025.key \
 --from-file=public.crt=applications/generated/certs/minio-tls-2025.pem 
+
 
 ```
 
@@ -792,7 +794,14 @@ MINIOVARS=$(echo 'export MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY="on"\nexport MINIO_NO
 kubectl create secret generic myminio-env -n ledgerbadger-prod --from-literal=config.env=$MINIOVARS
 
 helm install --namespace ledgerbadger-prod --values guest/helm-values/minio-tenant.yaml ledgerbadger-prod minio-operator/tenant
+
+kubectl apply -f  guest/manifests/static/ledgerbadger-myminio-svc.yaml -n ledgerbadger-prod
+MINIO_PORT=$(kubectl get svc myminio -n ledgerbadger-prod -o json | jq -r '.spec.ports[0].nodePort')
+MINIO_FQDN_IN_HOSTS="myminio.ledgerbadger-prod.svc.cluster.local"
+MINIO_ADDR="https://$MINIO_FQDN_IN_HOSTS:$MINIO_PORT"
+echo $MINIO_ADDR
 ```
+Update your /etc/hosts to include minio
 
 # Cleanup MinIO, if needed
 Why do we need to use helm to create and delete a custom resource?
