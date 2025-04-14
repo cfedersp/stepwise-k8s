@@ -796,8 +796,17 @@ cp docker-openldap/example/kubernetes/using-secrets/environment/ldap-env.startup
 
 kubectl create secret generic ldap-secret \
    --from-file=env.yaml=guest/manifests/static/ldap-env.yaml \
-   --from-file=env.startup.yaml=guest/manifests/static/dap-env.startup.yaml
+   --from-file=env.startup.yaml=guest/manifests/static/ldap-env.startup.yaml
 kubectl create -f guest/manifests/static/ldap-ss.yaml
+
+kubectl apply -f  guest/manifests/static/ldap-svc.yaml
+LDAP_PORT=$(kubectl get svc ldap -o json | jq -r '.spec.ports[0].nodePort')
+
+LDAP_FQDN_IN_HOSTS="ldap.default.svc.cluster.local"
+LDAP_ADDR="https://$LDAP_FQDN_IN_HOSTS:$LDAP_PORT"
+nc -z -v ldap.default.svc.cluster.local $LDAP_PORT
+echo $LDAP_ADDR
+
 ```
 
 
