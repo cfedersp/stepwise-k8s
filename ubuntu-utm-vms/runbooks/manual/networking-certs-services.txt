@@ -790,6 +790,8 @@ kubectl exec \
 
 # Install OpenLdap
 indents are wrong, but it works. certs?
+https://serverfault.com/questions/546933/write-hash-password-to-ldap-when-creating-a-new-user
+See section for billy: https://github.com/osixia/docker-openldap
 ```
 cp docker-openldap/example/kubernetes/using-secrets/environment/my-env.yaml.example guest/manifests/static/ldap-env.yaml
 cp docker-openldap/example/kubernetes/using-secrets/environment/ldap-env.startup.yaml guest/manifests/static/dap-env.startup.yaml
@@ -806,9 +808,17 @@ LDAP_ADDR="$LDAP_FQDN_IN_HOSTS:$LDAP_PORT"
 nc -z -v $LDAP_FQDN_IN_HOSTS $LDAP_PORT
 echo $LDAP_ADDR
 ldapsearch -x -H ldap://$LDAP_ADDR -b dc=example,dc=org -D "cn=admin,dc=example,dc=org" -w admin
+slappasswd -s "Sh1tSh1t"
+# update billy.ldif
+ldapmodify -H ldap://$LDAP_ADDR -D cn=admin,dc=example,dc=org -f ../ldap/billy.ldif -w 'admin'
+ldappasswd -H ldap://$LDAP_ADDR -D "uid=billy,dc=example,dc=org" -S  -w 'admin'
 
 ```
 
+Clean up ldap:
+```
+ldapdelete -H ldap://$LDAP_ADDR -D 'cn=admin,dc=example,dc=org' -w 'admin' 'uid=billy,dc=example,dc=org'
+```
 
 # Install Minio Object store
 ```
