@@ -8,5 +8,7 @@ jo apiVersion=kubeadm.k8s.io/v1beta3 kind=InitConfiguration nodeRegistration=$(j
 echo "---" >> $CLUSTER_CONFIG
 jo apiVersion=kubeadm.k8s.io/v1beta3 kind=ClusterConfiguration networking=$(jo podSubnet="10.85.0.0/16") controlPlaneEndpoint=$IP_ADDRESS apiServer=$(jo certSANs=$(jo -a "127.0.0.1" "$IP_ADDRESS")) | yq -rRy > $CLUSTER_CONFIG
 
+# /usr/bin/kubeadm init --apiserver-advertise-address="192.168.163.55" --apiserver-cert-extra-sans="controlplane" --pod-network-cidr="172.17.0.0/16" --service-cidr="172.20.0.0/16"
+
 /usr/bin/kubeadm init --config  $CLUSTER_CONFIG
 

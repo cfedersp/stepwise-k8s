@@ -1,0 +1,21 @@
+#cloud-config
+packages:
+  - network-manager 
+  - inetutils-traceroute 
+  - net-tools 
+  - parted 
+  - lvm2 
+  - netcat-openbsd 
+  - zip 
+  - git 
+  - apt-transport-https 
+  - ca-certificates 
+  - curl 
+  - gnupg2 
+  - software-properties-common 
+  - jo 
+  - jq 
+  - yq
+runcmd:
+  - /usr/share/host/vm-prep/kubernete-packages.sh 1.32
+

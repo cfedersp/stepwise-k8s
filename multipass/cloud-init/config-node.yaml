@@ -1,0 +1,19 @@
+#cloud-config
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    default:
+      match:
+        macaddress: "52:54:00:25:f1:53"
+      dhcp-identifier: "mac"
+      dhcp4: true
+    extra0:
+      dhcp4: no
+      vlans:
+        enp0s3.3:  # VLAN 10 interface
+          id: 3
+          link: enp0s3
+          addresses: [192.168.126.7/24]  # Replace with your VLAN's IP and subnet
+        
+      
