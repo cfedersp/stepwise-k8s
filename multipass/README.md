@@ -25,6 +25,7 @@ multipass exec master -- sudo mkdir -p /etc/cni/net.d
 multipass exec master -- sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
 multipass exec master -- sudo /usr/share/host/guest/master/install-config.sh
+multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 multipass exec master -- kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
 # multipass exec master -- kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/custom-resources.yaml
@@ -59,6 +60,7 @@ multipass exec worker1 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker1 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker1 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
 multipass exec worker1 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker1 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 multipass start worker2
@@ -66,6 +68,7 @@ multipass exec worker2 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker2 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker2 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
 multipass exec worker2 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker2 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 multipass start worker3
@@ -73,20 +76,23 @@ multipass exec worker3 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker3 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker3 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
 multipass exec worker3 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker3 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 multipass start worker4
 multipass exec worker4 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker4 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker4 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker4 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker4 -- sudo kubeadm join --config ./join-config.json 
+multipass exec worker4 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 multipass start worker5
 multipass exec worker5 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker5 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker5 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker5 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker5 -- sudo kubeadm join --config ./join-config.json 
+multipass exec worker5 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 multipass start worker6
@@ -94,10 +100,25 @@ multipass exec worker6 -- sudo mkdir -p /etc/cni/net.d
 multipass exec worker6 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec worker6 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
 multipass exec worker6 -- sudo kubeadm join --config ./join-config.json  
+multipass exec worker6 -- sudo mkdir -p /var/lib/data/openebs-volumes
 multipass exec master -- kubectl get nodes
 
 
+# we're using Calico, so routes are managed automatically for us.
 
+# make kubectl usable on host
+cp Documents/projects/stepwise-k8s/multipass/guest/generated/admin.conf ~/.kube/config
+
+# add helm repo on host
+helm repo add openebs https://openebs.github.io/openebs
+helm repo update
+kubectl explain storageclass
+# SKIP: configure openebs to use host dirs, create hostpath SC
+kubectl apply -f guest/manifests/openebs-hostpath-sc.yaml 
+
+# install openebs
+helm install openebs --namespace openebs openebs/openebs --create-namespace --values helm/values/openebs-disable-mayastor-and-lvm.yaml
+kubectl get pods -n openebs
 
 
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh

@@ -1,0 +1,11 @@
+engines:
+  replicated:
+    mayastor:
+      enabled: false
+  local:
+    lvm:
+      enabled: false
+lvm-localpv:
+  crds:
+    lvmLocalPv:
+      enabled: false
