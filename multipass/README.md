@@ -19,6 +19,13 @@ multipass set local.master.disk=100G
 multipass set local.master.memory=2G
 multipass set local.master.cpus=2
 multipass start master
+multipass shell master
+sudo su root
+IP_ADDRESS=$(ifconfig enp0s1 | grep 'inet ' | awk '{print $2}')
+printf "    ensp01:\n      dhcp4: false\n      dhcp6: false\n      addresses:\n      - ${IP_ADDRESS}/24\n" >> /etc/netplan/50-cloud-init.yaml
+netplan generate
+netplan apply
+
 
 multipass exec master -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec master -- sudo mkdir -p /etc/cni/net.d
@@ -119,6 +126,11 @@ kubectl apply -f guest/manifests/openebs-hostpath-sc.yaml
 # install openebs
 helm install openebs --namespace openebs openebs/openebs --create-namespace --values helm/values/openebs-disable-mayastor-and-lvm.yaml
 kubectl get pods -n openebs
+kubectl annotate sc openebs-hostpath storageclass.kubernetes.io/is-default-class="true"
+# install airflow:
+helm repo add apache-airflow https://airflow.apache.org
+helm repo update
+helm upgrade --install airflow2 apache-airflow/airflow --namespace airflow2 --create-namespace --values helm-values/airflow.yaml
 
 
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh

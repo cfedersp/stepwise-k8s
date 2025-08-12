@@ -1,0 +1,30 @@
+workers:
+   waitForMigrations:
+    enabled: false
+   persistence:
+    size: 10G
+scheduler:
+  waitForMigrations:
+    enabled: false
+webserver:
+  waitForMigrations:
+    enabled: false
+apiServer:
+  waitForMigrations:
+    enabled: false
+triggerer:
+  waitForMigrations:
+    enabled: false
+  persistence:
+    size: 10G
+dagProcessor:
+  waitForMigrations:
+    enabled: false
+migrateDatabaseJob:
+  enabled: false
+logs:
+  persistence:
+    # Enable persistent volume for storing logs
+    enabled: false
+    # Volume size for logs
+    size: 10G

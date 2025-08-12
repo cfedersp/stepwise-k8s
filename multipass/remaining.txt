@@ -1,0 +1,10 @@
+install airflow 
+
+clean up readme
+
+automate worker creation
+
+upgrade kubernetes
+backup
+restore
+
