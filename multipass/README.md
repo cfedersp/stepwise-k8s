@@ -26,89 +26,29 @@ printf "    ensp01:\n      dhcp4: false\n      dhcp6: false\n      addresses:\n 
 netplan generate
 netplan apply
 
+#############
+### NOT done:
+kubeadm config images pull
+specify where on each host we want openebs to create host local storage
+Add workers (relative) kubectl get nodes -o jsonpath='{.items[].metadata.name }'
+#############
 
-multipass exec master -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
 multipass exec master -- sudo mkdir -p /etc/cni/net.d
-multipass exec master -- sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
+multipass exec master -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
-multipass exec master -- sudo /usr/share/host/guest/master/install-config.sh
+multipass exec master -- sudo cp /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
+multipass exec master -- /usr/share/host/guest/master/install-config.sh
 multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-multipass exec master -- kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
+cp $HOME/Documents/projects/stepwise-k8s/multipass/guest/generated/admin.conf $HOME/.kube/config
+kubectl get nodes
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
 # multipass exec master -- kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/custom-resources.yaml
-multipass exec master -- kubectl apply -k /usr/share/host/guest/calico/
-multipass exec master -- kubectl get tigerastatus
-
-Could not resolve CalicoNetwork IPPool and kubeadm configuration: IPPool 192.168.0.0/16 is not within the platform's configured pod network CIDR(s) [10.85.0.0/16]
+kubectl apply -k $HOME/Documents/projects/stepwise-k8s/multipass/guest/calico/
+kubectl get tigerastatus
 
 multipass exec master -- /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
 
-multipass clone reference --name worker1
-multipass set local.worker1.disk=100G
-multipass set local.worker1.memory=1G
-multipass clone reference --name worker2
-multipass set local.worker2.disk=100G
-multipass set local.worker2.memory=1G
-multipass clone reference --name worker3
-multipass set local.worker3.disk=100G
-multipass set local.worker3.memory=1G
-multipass clone reference --name worker4
-multipass set local.worker4.disk=100G
-multipass set local.worker4.memory=1G
-multipass clone reference --name worker5
-multipass set local.worker5.disk=100G
-multipass set local.worker5.memory=1G
-multipass clone reference --name worker6
-multipass set local.worker6.disk=100G
-multipass set local.worker6.memory=1G
-
-multipass start worker1
-multipass exec worker1 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker1 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker1 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker1 -- sudo kubeadm join --config ./join-config.json  
-multipass exec worker1 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-
-multipass start worker2
-multipass exec worker2 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker2 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker2 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker2 -- sudo kubeadm join --config ./join-config.json  
-multipass exec worker2 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-
-multipass start worker3
-multipass exec worker3 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker3 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker3 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker3 -- sudo kubeadm join --config ./join-config.json  
-multipass exec worker3 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-
-multipass start worker4
-multipass exec worker4 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker4 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker4 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker4 -- sudo kubeadm join --config ./join-config.json 
-multipass exec worker4 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-
-multipass start worker5
-multipass exec worker5 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker5 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker5 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker5 -- sudo kubeadm join --config ./join-config.json 
-multipass exec worker5 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
-
-multipass start worker6
-multipass exec worker6 -- sudo mkdir -p /etc/cni/net.d
-multipass exec worker6 -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-multipass exec worker6 -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-multipass exec worker6 -- sudo kubeadm join --config ./join-config.json  
-multipass exec worker6 -- sudo mkdir -p /var/lib/data/openebs-volumes
-multipass exec master -- kubectl get nodes
+guest/workers/launch-workers.sh reference 6
 
 
 # we're using Calico, so routes are managed automatically for us.
