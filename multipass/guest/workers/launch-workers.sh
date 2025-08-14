@@ -2,7 +2,7 @@
 
 set -e -x
 REF_VM=$1
-STARTNUM=0
+STARTNUM=1
 MAX_WORKERS=$2
 DISK_SIZE="100G"
 if [[ -z "$MAX_WORKERS" ]]; then

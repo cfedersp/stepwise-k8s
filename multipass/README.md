@@ -31,6 +31,7 @@ netplan apply
 kubeadm config images pull
 specify where on each host we want openebs to create host local storage
 Add workers (relative) kubectl get nodes -o jsonpath='{.items[].metadata.name }'
+use yaml tool to create netplan static ip
 #############
 
 multipass exec master -- sudo mkdir -p /etc/cni/net.d
