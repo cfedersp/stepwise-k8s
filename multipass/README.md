@@ -6,6 +6,8 @@ Host Access
 Networking: 1 interface for hosts, 1 interface for pod, service and control plane traffic
 We could simply use iproute to route pod traffic, but then all that traffic originating from a VM gets shared with your entire house. Traffic originating from the host stays within that host.
 
+Host Prep:
+./download-keys.sh 1.32
 
 Enable Full Disk Access to multipassd within Mac Settings -> Privacy & Security
 multipass launch --name reference  --bridged  --mount ~/Documents/projects/stepwise-k8s/multipass/:/usr/share/host
@@ -15,16 +17,24 @@ multipass exec reference -- sudo /usr/share/host/vm-prep/kubernetes-packages.sh
 multipass exec reference -- sudo shutdown
 
 multipass clone reference --name master 
-multipass set local.master.disk=100G
+multipass set local.master.disk=20G
 multipass set local.master.memory=2G
 multipass set local.master.cpus=2
 multipass start master
-multipass shell master
-sudo su root
-IP_ADDRESS=$(ifconfig enp0s1 | grep 'inet ' | awk '{print $2}')
-printf "    ensp01:\n      dhcp4: false\n      dhcp6: false\n      addresses:\n      - ${IP_ADDRESS}/24\n" >> /etc/netplan/50-cloud-init.yaml
-netplan generate
-netplan apply
+
+
+Show storage:
+sudo ls /var/root/Library/Application\ Support/multipassd/qemu/vault/instances/
+
+plugins[].subnet is shorthand for plugins[].ranges[{subnet}]
+conflist files include the plugins array. conf file can just have a single entry
+
+If we dont put a conflist in place before calico..?
+Problems: 
+kubelet is trying to use containerd
+mounts are gone
+home dir files are gone - its as if worker state is almost completely gone, but services are still intact?
+would be nice if we used vlan so traffic isn't going thru wifi router.
 
 #############
 ### NOT done:
@@ -34,19 +44,28 @@ Add workers (relative) kubectl get nodes -o jsonpath='{.items[].metadata.name }'
 use yaml tool to create netplan static ip
 #############
 
+# cni gives a path for coredns service. A bridge only works if your router allows hairpin traffic
 multipass exec master -- sudo mkdir -p /etc/cni/net.d
-multipass exec master -- sudo cp /usr/share/host/guest/cni/master-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist
+multipass exec master -- ls /etc/cni/net.d
+multipass exec master -- ifconfig
+# multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-flannel-overlay.conflist /etc/cni/net.d/10-flannel-overlay.conflist
+# crio will give you the bridge conflist to use, we just have to enable it
+# But we know we are simply bootstrapping to Calico, so instead of the wide-range default bridge, we give a CRIO bridge with a specific, limited IP range that we know wont conflict with the Calico range.
+multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist
+multipass exec master -- ifconfig
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
 multipass exec master -- sudo cp /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
-multipass exec master -- /usr/share/host/guest/master/install-config.sh
-multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
 cp $HOME/Documents/projects/stepwise-k8s/multipass/guest/generated/admin.conf $HOME/.kube/config
+
+# multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
 kubectl get nodes
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
-# multipass exec master -- kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/custom-resources.yaml
-kubectl apply -k $HOME/Documents/projects/stepwise-k8s/multipass/guest/calico/
+kubectl create -k $HOME/Documents/projects/stepwise-k8s/multipass/guest/calico/
 kubectl get tigerastatus
+multipass exec master -- sudo mv /etc/cni/net.d/10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist.disabled
 
+# create-join-config needs to use kubectl
+multipass exec master -- /usr/share/host/guest/master/install-config.sh
 multipass exec master -- /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
 
 guest/workers/launch-workers.sh reference 6
@@ -62,99 +81,22 @@ helm repo add openebs https://openebs.github.io/openebs
 helm repo update
 kubectl explain storageclass
 # SKIP: configure openebs to use host dirs, create hostpath SC
-kubectl apply -f guest/manifests/openebs-hostpath-sc.yaml 
+# kubectl apply -f guest/manifests/openebs-hostpath-sc.yaml 
+
+kubectl create secret docker-registry dockerhub \
+      --docker-server=docker.io \
+      --docker-username=<your-username> --docker-password=<your-password> --docker-email=<your-email>
 
 # install openebs
-helm install openebs --namespace openebs openebs/openebs --create-namespace --values helm/values/openebs-disable-mayastor-and-lvm.yaml
+helm install openebs --namespace openebs openebs/openebs --create-namespace --values helm-values/openebs-disable-mayastor-and-lvm.yaml
 kubectl get pods -n openebs
 kubectl annotate sc openebs-hostpath storageclass.kubernetes.io/is-default-class="true"
 # install airflow:
 helm repo add apache-airflow https://airflow.apache.org
 helm repo update
-helm upgrade --install airflow2 apache-airflow/airflow --namespace airflow2 --create-namespace --values helm-values/airflow.yaml
+helm upgrade --install airflow apache-airflow/airflow --namespace airflow --create-namespace --values helm-values/airflow.yaml
 
 
-multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
-
-MacOs doesn't use vconfig and ip, so we use the older ifconfig.
-First view your hardware network interfaces
-ifconfig -a
-Create a new VLAN and tag it '3' as a virtual device on the physical network card 'en0'.
-Assign the device gateway? an internet type ip address with the given value and have it listen to traffic within the given mask-space
-sudo ifconfig vlan0 create
-sudo ifconfig vlan0 vlan 3 vlandev en0
-sudo ifconfig vlan0 inet 192.168.126.7 netmask 255.255.255.0
-
-sudo ifconfig vlan0 up
-
-Dont use DHCP:
-# ipconfig set vlan0 DHCP
 
 
-multipass launch --name master  --bridged --mount ~/Documents/projects/stepwise-k8s/ubuntu-utm-vms/:/usr/share/host --cloud-init cloud-init/config-node.yaml
-
-within master:
-vlan, kernel module, netplan config
-sudo apt-get update
-sudo apt-get install vlan
-sudo modprobe 8021q
-
-
-multipass stop master
-
-multipass networks
-
-multipass set local.bridged-network=vlan0
-multipass set local.master.bridged=true
-
-multipass start master
-multipass shell master
-
-within master:
-ip add 
-
-multipass delete master
-multipass purge
-
-
-A network bridge connects two or more network segments or interfaces together.
-A network bridge to the host network will inherit? the hosts gateway, DNS and routes
-
-
-Netplan can create VLAN interfaces directly on a physical interface or use a bridge to connect a VLAN interface to other network interfaces. 
-
-brew install gnupg
-./download-keys.sh 1.32
-
-
-multipass launch --name master  --disk 20G --cpus 2 --memory 2G --bridged --mount ~/Documents/projects/stepwise-k8s/multipass/:/usr/share/host
-
-multipass shell master
-sudo /usr/share/host/vm-prep/apt-installs.sh
-/usr/share/host/guest/cni/customize-pod-cidr.sh 1
-sudo mkdir -p /etc/cni/net.d
-sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-
-sudo /usr/share/host/guest/master/start-master.sh
-sudo /usr/share/host/guest/master/install-config.sh
-/usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/custom-resources.yaml
-
-launch-workers.sh 7
-
-edit /etc/cloud/cloud.cfg and remove -resizefs
-multipass set local.worker7.disk=100G
-
-/usr/share/host/guest/cni/customize-pod-cidr.sh $(hostname | sed -n 's/.*\([0-9]\+\)/\1/p')
-sudo mkdir -p /etc/cni/net.d
-sudo cp 11-crio-ipv4-bridge.conflist /etc/cni/net.d/ 
-/usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
-sudo kubeadm join --config ./join-config.json  
-mkdir -p ~/.kube; cp /usr/share/host/guest/generated/admin.conf ~/.kube/config 
-
-kubectl get nodes
-
-# sudo networksetup -add vmenet2 bridge101
-# --cloud-init path-to-cloud-init
 

@@ -15,9 +15,7 @@ do
     multipass set local.worker$i.disk=$DISK_SIZE
     multipass set local.worker$i.memory=1G
 done
-echo "finished cloning.."
-sleep 90
-echo "launching instances.."
+echo "finished cloning..launching instances.."
 
 for (( i=$STARTNUM; i<=$MAX_WORKERS; i++ ))
 do
@@ -30,14 +28,12 @@ sleep 90
 for (( i=$STARTNUM; i<=$MAX_WORKERS; i++ ))
 do
     multipass exec worker$i -- sudo mkdir -p /etc/cni/net.d
-    multipass exec worker$i -- sudo cp /usr/share/host/guest/cni/worker-11-crio-ipv4-bridge.conflist /etc/cni/net.d/11-crio-ipv4-bridge.conflist 
-    multipass exec worker$i -- sudo /usr/share/host/guest/all-nodes/netplan-static-ip.sh
     multipass exec worker$i -- /usr/share/host/guest/workers/customize-join-config.sh /usr/share/host/guest/generated
     multipass exec worker$i -- sudo kubeadm join --config ./join-config.json  
     multipass exec worker$i -- sudo mkdir -p /var/lib/data/openebs-volumes
 done
-for (( i=$STARTNUM; i<=$MAX_WORKERS; i++ ))
-do
-    multipass restart worker$i
-done
+# for (( i=$STARTNUM; i<=$MAX_WORKERS; i++ ))
+# do
+#    multipass restart worker$i
+# done
 
