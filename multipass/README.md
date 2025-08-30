@@ -55,7 +55,13 @@ multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-crio-ipv4-b
 multipass exec master -- ifconfig
 multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
 multipass exec master -- sudo cp /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
+
+# make kubectl usable on host
 cp $HOME/Documents/projects/stepwise-k8s/multipass/guest/generated/admin.conf $HOME/.kube/config
+
+kubectl create secret docker-registry dockerhub \
+      --docker-server=docker.io \
+      --docker-username=<your-username> --docker-password=<your-password> --docker-email=<your-email>
 
 # multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
 kubectl get nodes
@@ -68,13 +74,7 @@ multipass exec master -- sudo mv /etc/cni/net.d/10-crio-ipv4-bridge.conflist /et
 multipass exec master -- /usr/share/host/guest/master/install-config.sh
 multipass exec master -- /usr/share/host/guest/master/create-join-config.sh /usr/share/host/guest/generated  
 
-guest/workers/launch-workers.sh reference 6
-
-
-# we're using Calico, so routes are managed automatically for us.
-
-# make kubectl usable on host
-cp Documents/projects/stepwise-k8s/multipass/guest/generated/admin.conf ~/.kube/config
+guest/workers/launch-workers.sh reference 1 3
 
 # add helm repo on host
 helm repo add openebs https://openebs.github.io/openebs
@@ -83,20 +83,49 @@ kubectl explain storageclass
 # SKIP: configure openebs to use host dirs, create hostpath SC
 # kubectl apply -f guest/manifests/openebs-hostpath-sc.yaml 
 
-kubectl create secret docker-registry dockerhub \
-      --docker-server=docker.io \
-      --docker-username=<your-username> --docker-password=<your-password> --docker-email=<your-email>
 
-# install openebs
+
+# DONT install openebs because that is mostly for MinIO
 helm install openebs --namespace openebs openebs/openebs --create-namespace --values helm-values/openebs-disable-mayastor-and-lvm.yaml
 kubectl get pods -n openebs
 kubectl annotate sc openebs-hostpath storageclass.kubernetes.io/is-default-class="true"
+
+# if calico-nodes tokens expire 
+    kubectl delete pods -n calico-system -l k8s-app=calico-node
+
+# Provisioning Capacity: get taints and memory
+kubectl describe nodes | grep Taints
+kubectl get nodes -o custom-columns=NAME:.metadata.name,MEMORY_CAPACITY:.status.capacity.memory
+
+# Any software that uses HTTPS internally will require cert-manager. 
+# We have no intention of managing internal certs manually and fortunately hostpath provisioner operator and webhook can use cert-manager provided self-signed certs.
+kubectl create -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.yaml
+kubectl wait --for=condition=Available -n cert-manager --timeout=120s --all deployments
+
+# install hostpath provisioner
+kubectl create -f https://raw.githubusercontent.com/kubevirt/hostpath-provisioner-operator/main/deploy/namespace.yaml
+kubectl create -f https://raw.githubusercontent.com/kubevirt/hostpath-provisioner-operator/main/deploy/webhook.yaml -n hostpath-provisioner
+kubectl create -f https://raw.githubusercontent.com/kubevirt/hostpath-provisioner-operator/main/deploy/operator.yaml -n hostpath-provisioner
+
+kubectl create -f guest/manifests/storage-pool-cr.yaml
+kubectl create -f guest/manifests/hostpath-sc.yaml
+
 # install airflow:
 helm repo add apache-airflow https://airflow.apache.org
 helm repo update
 helm upgrade --install airflow apache-airflow/airflow --namespace airflow --create-namespace --values helm-values/airflow.yaml
 
+# Sample commands
+kubectl annotate <resource_type>/<resource_name> <annotation_key>-
+kubectl patch pvc/redis-db-airflow-redis-0 -p '{"metadata":{"finalizers":[]}}' -n airflow --type=merge
 
 
 
+issues:
 
+message: '0/7 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane:
+      }, 1 node(s) had untolerated taint {node.kubernetes.io/unreachable: }, 5 Insufficient
+      memory. preemption: 0/7 nodes are available: 2 Preemption is not helpful for
+      scheduling, 5 No preemption victims found for incoming pod.'
+
+configmap "airflow-config" not found

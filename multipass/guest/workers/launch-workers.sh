@@ -2,8 +2,8 @@
 
 set -e -x
 REF_VM=$1
-STARTNUM=1
-MAX_WORKERS=$2
+STARTNUM=$2
+MAX_WORKERS=$3
 DISK_SIZE="100G"
 if [[ -z "$MAX_WORKERS" ]]; then
   echo "MAX_WORKERS is not set."

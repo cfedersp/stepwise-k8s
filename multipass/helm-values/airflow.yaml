@@ -1,30 +1,62 @@
+config:
+  api:
+    workers: 1
 workers:
    waitForMigrations:
-    enabled: false
+    enabled: true
    persistence:
     size: 10G
 scheduler:
   waitForMigrations:
-    enabled: false
+    enabled: true
 webserver:
   waitForMigrations:
-    enabled: false
+    enabled: true
 apiServer:
   waitForMigrations:
-    enabled: false
+    enabled: true
 triggerer:
   waitForMigrations:
-    enabled: false
+    enabled: true
   persistence:
     size: 10G
 dagProcessor:
   waitForMigrations:
-    enabled: false
+    enabled: true
 migrateDatabaseJob:
-  enabled: false
+  enabled: true
 logs:
   persistence:
     # Enable persistent volume for storing logs
     enabled: false
     # Volume size for logs
     size: 10G
+triggerer:
+  persistence:
+    # Enable persistent volume for storing logs
+    enabled: true
+    # Volume size for logs
+    size: 10G
+redis:
+  persistence:
+    # Enable persistent volume for storing logs
+    enabled: true
+    # Volume size for logs
+    size: 5G
+dags:
+  persistence:
+    # Enable persistent volume for storing logs
+    enabled: true
+    # Volume size for logs
+    size: 1G
+workers:
+  persistence:
+    # Enable persistent volume for storing logs
+    enabled: true
+    # Volume size for logs
+    size: 10G
+postgresql:
+  primary:
+    resources:
+      requests:
+        memory: 128Mi
