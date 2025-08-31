@@ -1,6 +1,8 @@
 config:
   api:
     workers: 1
+dags:
+  mountPath: /airflow/dags/
 workers:
    waitForMigrations:
     enabled: true
@@ -60,3 +62,6 @@ postgresql:
     resources:
       requests:
         memory: 128Mi
+dags:
+  persistence:
+    storageClassName: applications-hostpath-csi

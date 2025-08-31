@@ -110,6 +110,9 @@ kubectl create -f https://raw.githubusercontent.com/kubevirt/hostpath-provisione
 kubectl create -f guest/manifests/storage-pool-cr.yaml
 kubectl create -f guest/manifests/hostpath-sc.yaml
 
+kubectl create -f guest/manifests/shared-storage-pool-cr.yaml
+kubectl create -f guest/manifests/applications-hostpath-sc.yaml
+
 # install airflow:
 helm repo add apache-airflow https://airflow.apache.org
 helm repo update
