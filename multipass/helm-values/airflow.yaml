@@ -3,6 +3,10 @@ config:
     workers: 1
 dags:
   mountPath: /airflow/dags/
+webserver:
+  enabled: true
+web:
+  enabled: true
 workers:
    waitForMigrations:
     enabled: true

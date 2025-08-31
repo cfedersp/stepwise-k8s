@@ -122,13 +122,38 @@ helm upgrade --install airflow apache-airflow/airflow --namespace airflow --crea
 kubectl annotate <resource_type>/<resource_name> <annotation_key>-
 kubectl patch pvc/redis-db-airflow-redis-0 -p '{"metadata":{"finalizers":[]}}' -n airflow --type=merge
 
+# install metrics server
+https://medium.com/@cloudspinx/fix-error-metrics-api-not-available-in-kubernetes-aa10766e1c2f
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+kubectl patch deployment metrics-server -n kube-system --type='json' -p='[
+{
+"op": "add",
+"path": "/spec/template/spec/hostNetwork",
+"value": true
+},
+{
+"op": "replace",
+"path": "/spec/template/spec/containers/0/args",
+"value": [
+"--cert-dir=/tmp",
+"--secure-port=4443",
+"--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname",
+"--kubelet-use-node-status-port",
+"--metric-resolution=15s",
+"--kubelet-insecure-tls"
+]
+},
+{
+"op": "replace",
+"path": "/spec/template/spec/containers/0/ports/0/containerPort",
+"value": 4443
+}
+]'
+
+kubectl top pod -n airflow   
 
 
-issues:
+kubectl port-forward svc/airflow-api-server 8080:8080 --namespace airflow
 
-message: '0/7 nodes are available: 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane:
-      }, 1 node(s) had untolerated taint {node.kubernetes.io/unreachable: }, 5 Insufficient
-      memory. preemption: 0/7 nodes are available: 2 Preemption is not helpful for
-      scheduling, 5 No preemption victims found for incoming pod.'
 
-configmap "airflow-config" not found
