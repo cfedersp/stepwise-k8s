@@ -2,6 +2,7 @@ config:
   api:
     workers: 1
 dags:
+  storageClassName: apps-hostpath-provisioner
   mountPath: /airflow/dags/
 webserver:
   enabled: true
