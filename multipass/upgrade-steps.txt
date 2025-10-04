@@ -38,8 +38,9 @@ kubectl uncordon master
 kubectl version
 sudo apt-mark unhold kubectl 
 sudo apt-get install kubectl=${KUBELET_VERSION}
-kubectl version
 sudo apt-mark hold kubectl 
+kubectl version
+
 
 kubectl cordon worker1
 kubectl drain worker1 --ignore-daemonsets
@@ -66,13 +67,13 @@ kubectl uncordon worker1
 
 
 Automate Node Upgrade:
-UPGRADE_HOST=worker3
+UPGRADE_HOST=worker1
 kubectl cordon $UPGRADE_HOST
-kubectl drain worker1 --ignore-daemonsets
+kubectl drain $UPGRADE_HOST --ignore-daemonsets
 multipass shell $UPGRADE_HOST
 
-export KUBERNETES_VERSION=1.33
-export KUBERNETES_BUILD=${KUBERNETES_VERSION}.5
+export KUBERNETES_VERSION=1.34
+export KUBERNETES_BUILD=${KUBERNETES_VERSION}.1
 export KUBELET_VERSION=${KUBERNETES_BUILD}-1.1
 sudo -Eu root /usr/share/host/guest/workers/upgrade-kubelet.sh $KUBERNETES_VERSION $KUBELET_VERSION
 sudo apt-mark unhold cri-tools
