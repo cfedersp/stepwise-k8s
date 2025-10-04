@@ -1,0 +1,88 @@
+Decide on approach: in-place
+Note the current version
+
+configure package repo to include new version
+unhold kubeadm, kubelet
+upgrade them specifying the version
+run kubeadm upgrade specifying the version
+cordon the node
+drain the node
+restart kubelet
+uncordon the node
+
+kubectl version
+export KUBERNETES_VERSION=1.33
+sudo -Eu root /bin/bash
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+apt-cache madison kubeadm
+KUBERNETES_BUILD=${KUBERNETES_VERSION}.5
+KUBELET_VERSION=${KUBERNETES_BUILD}-1.1
+apt-mark unhold kubeadm kubelet
+apt-get install kubeadm=${KUBELET_VERSION}
+apt-get install kubelet=${KUBELET_VERSION}
+apt-mark hold kubeadm kubelet
+exit
+sudo kubeadm upgrade plan 
+export KUBERNETES_VERSION=1.33
+export KUBERNETES_BUILD=${KUBERNETES_VERSION}.5
+export KUBELET_VERSION=${KUBERNETES_BUILD}-1.1
+echo v${KUBERNETES_BUILD}
+sudo kubeadm upgrade apply v${KUBERNETES_BUILD}
+kubectl cordon master
+kubectl drain master --ignore-daemonsets
+sudo apt-get upgrade -y kubelet=$KUBELET_VERSION
+sudo systemctl restart kubelet
+kubectl uncordon master
+kubectl version
+sudo apt-mark unhold kubectl 
+sudo apt-get install kubectl=${KUBELET_VERSION}
+kubectl version
+sudo apt-mark hold kubectl 
+
+kubectl cordon worker1
+kubectl drain worker1 --ignore-daemonsets
+multipass shell worker1
+
+export KUBERNETES_VERSION=1.33
+export KUBERNETES_BUILD=${KUBERNETES_VERSION}.5
+export KUBELET_VERSION=${KUBERNETES_BUILD}-1.1
+sudo -Eu root /bin/bash
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+
+apt-mark unhold kubelet
+apt-get upgrade -y kubelet=${KUBELET_VERSION}
+apt-mark hold kubelet
+systemctl restart kubelet
+apt list --upgradable
+apt-get upgrade -y cri-tools=${KUBERNETES_VERSION}.0-1.1
+exit 
+exit
+kubectl uncordon worker1
+
+
+
+Automate Node Upgrade:
+UPGRADE_HOST=worker3
+kubectl cordon $UPGRADE_HOST
+kubectl drain worker1 --ignore-daemonsets
+multipass shell $UPGRADE_HOST
+
+export KUBERNETES_VERSION=1.33
+export KUBERNETES_BUILD=${KUBERNETES_VERSION}.5
+export KUBELET_VERSION=${KUBERNETES_BUILD}-1.1
+sudo -Eu root /usr/share/host/guest/workers/upgrade-kubelet.sh $KUBERNETES_VERSION $KUBELET_VERSION
+sudo apt-mark unhold cri-tools
+sudo apt-get upgrade -y cri-tools=${KUBERNETES_VERSION}.0-1.1
+sudo apt-mark hold cri-tools
+exit
+kubectl uncordon $UPGRADE_HOST
+kubectl get nodes
+
+
+apt list --installed cri-tools
+apt list --upgradable
+apt show -a cri-tools

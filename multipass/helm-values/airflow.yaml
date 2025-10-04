@@ -1,18 +1,24 @@
+executor: "KubernetesExecutor"
+useStandardNaming: true
+webserverSecretKeySecretName: webserver-secret
 config:
   api:
     workers: 1
 dags:
-  storageClassName: apps-hostpath-provisioner
-  mountPath: /airflow/dags/
-webserver:
-  enabled: true
-web:
-  enabled: true
-workers:
-   waitForMigrations:
+  persistence:
+    # Enable persistent volume for storing logs
     enabled: true
-   persistence:
-    size: 10G
+    # Volume size for logs
+    size: 1G
+    storageClassName: "-"
+workers:
+  waitForMigrations:
+    enabled: true
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      memory: 128Mi
 scheduler:
   waitForMigrations:
     enabled: true
@@ -26,22 +32,26 @@ triggerer:
   waitForMigrations:
     enabled: true
   persistence:
+    # Enable persistent volume for storing logs
+    enabled: true
+    # Volume size for logs
     size: 10G
 dagProcessor:
   waitForMigrations:
     enabled: true
 migrateDatabaseJob:
   enabled: true
+  resources:
+    limits:
+      cpu: 1000m #128m
+      memory: 256Mi #128Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
 logs:
   persistence:
     # Enable persistent volume for storing logs
     enabled: false
-    # Volume size for logs
-    size: 10G
-triggerer:
-  persistence:
-    # Enable persistent volume for storing logs
-    enabled: true
     # Volume size for logs
     size: 10G
 redis:
@@ -50,23 +60,13 @@ redis:
     enabled: true
     # Volume size for logs
     size: 5G
-dags:
-  persistence:
-    # Enable persistent volume for storing logs
-    enabled: true
-    # Volume size for logs
-    size: 1G
-workers:
-  persistence:
-    # Enable persistent volume for storing logs
-    enabled: true
-    # Volume size for logs
-    size: 10G
 postgresql:
   primary:
     resources:
+      limits:
+        cpu: 2000m #128m
+        memory: 512Mi
       requests:
-        memory: 128Mi
-dags:
-  persistence:
-    storageClassName: applications-hostpath-csi
+        memory: 256Mi
+        cpu: 1000m
+    

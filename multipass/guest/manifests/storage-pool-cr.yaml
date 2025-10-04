@@ -5,8 +5,10 @@ metadata:
 spec:
   imagePullPolicy: Always
   storagePools:
-    - name: "local"
+    - name: "local-gp"
       path: "/var/hpvolumes"
+    - name: "local-logs"
+      path: "/usr/share/host/guest-logs"
   workload:
     nodeSelector:
       kubernetes.io/os: linux

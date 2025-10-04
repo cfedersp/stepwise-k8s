@@ -109,14 +109,67 @@ kubectl create -f https://raw.githubusercontent.com/kubevirt/hostpath-provisione
 
 kubectl create -f guest/manifests/storage-pool-cr.yaml
 kubectl create -f guest/manifests/hostpath-sc.yaml
+kubectl create -f guest/manifests/logs-hostpath-sc.yaml
 
-kubectl create -f guest/manifests/shared-storage-pool-cr.yaml
-kubectl create -f guest/manifests/applications-hostpath-sc.yaml
+kubectl create -f guest/manifests/dag-pv.yaml
 
 # install airflow:
+git clone git@github.com:apache/airflow.git
+kubectl create ns airflow
+helm install airflow ../../oss/airflow/chart/ -n airflow --dry-run=client > airflow-3.0.6-chart.yaml
+
 helm repo add apache-airflow https://airflow.apache.org
 helm repo update
-helm upgrade --install airflow apache-airflow/airflow --namespace airflow --create-namespace --values helm-values/airflow.yaml
+kubectl create ns airflow
+kubectl create secret generic webserver-secret -n airflow --from-literal="webserver-secret-key=$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+helm install airflow apache-airflow/airflow --namespace airflow --values helm-values/airflow.yaml
+helm upgrade airflow apache-airflow/airflow --namespace airflow --set migrateDatabaseJob.useHelmHooks=false --set migrateDatabaseJob.enabled=false --set apiServer.waitForMigrations.enabled=false --set workers.waitForMigrations.enabled=false --set scheduler.waitForMigrations.enabled=false --values helm-values/airflow.yaml
+
+https://groups.google.com/g/kubevirt-dev/c/zTnXrjYDDcc?pli=1
+
+Delete the HPP
+Delete the cluster, if necessary - done
+Can create a kubevirt storage pool, but dont create app-data location or sc.
+Since app sc is no longer the default, any log persistence must specify the new sc!
+Remove dag processor's dag folder storageclass from helm values.
+a hpp sc can be the default
+sc name must be - so the helm chart will set it to "" - done
+create hpp and sc, but not for app, since there is no need for it
+create a hostpath PV manifest and apply it
+update the helm chart..
+OR start airflow
+
+why was openebs switched out for kubevirt? not sure.
+why is airflow helm chart still using 3.0.2 with FAB? 
+what is create user doing?creating admin:admin
+why is it running after I disabled hooks?
+Solution:
+dbmigration JOb needs more CPU and Memory
+postgres need more CPU and Memory
+nodes needed restart
+
+New Problem:
+kubevirt csi provisioner mounted applications for csi log volumes and never released that mount?
+dag folder is using the same storage pool, but cant read my files since above mount is overlaying the host's files.
+
+
+#
+kubectl port-forward svc/airflow-api-server 8080:8080 --namespace airflow
+Default Webserver (Airflow UI) Login credentials:
+    username: admin
+    password: admin
+Default Postgres connection credentials:
+    username: postgres
+    password: postgres
+    port: 5432
+
+
+# Check db
+kubectl exec -it airflow-postgresql-0  -n airflow -- psql -U postgres
+\l
+\du
+\c postgres
+\dt public.*
 
 # Sample commands
 kubectl annotate <resource_type>/<resource_name> <annotation_key>-
@@ -156,4 +209,20 @@ kubectl top pod -n airflow
 
 kubectl port-forward svc/airflow-api-server 8080:8080 --namespace airflow
 
+# Issues:
+need jsonfilter for Terminating pods
+Expecting my dags folder to get mounted with its own PVC.
+kubectl cp applications/airflow/dags/hello-taskflow.py airflow-dag-processor-7bb68f86c-s7tsg:/opt/airflow/dags/ -n airflow
+worker has no memory request
+how to view VM available memory?
 
+Clean up:
+helm uninstall airflow -n airflow 
+kubectl delete pvc -n airflow data-airflow-postgresql-0 redis-db-airflow-redis-0
+
+kubectl patch pvc data-airflow-postgresql-0  -p '{"metadata":{"finalizers":null}}' -n airflow
+kubectl patch pvc redis-db-airflow-redis-0  -p '{"metadata":{"finalizers":null}}' -n airflow  
+
+
+multipass restart master worker1 worker2 worker3 worker4 worker5 worker6 worker7 worker8
+multipass stop --force worker2 worker3 worker4 worker5 worker6
