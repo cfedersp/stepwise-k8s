@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e -x
 
-KUBERNETES_VERSION=1.32
+KUBERNETES_VERSION=$1
 # CRIO_VERSION=1.32.6
 
 cp /usr/share/host/host-prep/keys/crio/cri-o-apt-keyring.gpg /etc/apt/keyrings/

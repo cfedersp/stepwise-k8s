@@ -1,3 +1,16 @@
+Cluster Design:
+Multipass Ubuntu VMs
+kubeadm defaults
+Calico Networking
+
+Target configuration
+etcd pod with hostPath volume mount
+kube-apiserver pod 
+
+Deficits/Compromises:
+multipass doesn't support virtio mounts. It uses sshfs shares that it sometimes forgets.
+Local VMs can get suspended, so their clocks get out of sync and basic kubernetes functions fail.
+
 Questions:
 does cni conf matter as long as it exists? need to test with static ipam and calico before installing calico.
 I dont think it needs to be customized if we're enabling Calico, but if we keep static ipam obv it does need to have custom range per host.
@@ -8,6 +21,7 @@ We could simply use iproute to route pod traffic, but then all that traffic orig
 
 Host Prep:
 ./download-keys.sh 1.32
+brew install etcd
 
 Enable Full Disk Access to multipassd within Mac Settings -> Privacy & Security
 multipass launch --name reference  --bridged  --mount ~/Documents/projects/stepwise-k8s/multipass/:/usr/share/host
@@ -224,5 +238,27 @@ kubectl patch pvc data-airflow-postgresql-0  -p '{"metadata":{"finalizers":null}
 kubectl patch pvc redis-db-airflow-redis-0  -p '{"metadata":{"finalizers":null}}' -n airflow  
 
 
-multipass restart master worker1 worker2 worker3 worker4 worker5 worker6 worker7 worker8
-multipass stop --force worker2 worker3 worker4 worker5 worker6
+multipass restart master worker1 worker2 worker3 worker4 worker5 worker6 worker7
+multipass stop --force master worker1 worker2 worker3 worker4 worker5 worker6 worker7
+
+kubectl delete pods -n calico-system -l k8s-app=calico-node
+
+kubectl config get-contexts
+kubectl config use-context kubernetes-admin@kubernetes
+
+# Debug why host DAGs aren't mounted
+
+kubectl get pod airflow-dag-processor-7b56bc9fd6-hg249  -n airflow -o yaml | grep nodeName
+multipass exec worker7 /bin/bash
+ls /usr/share/host/applications/airflow/dags/
+
+sudo crictl ps
+sudo crictl inspect 746ad4fce2a1b
+
+multipass mount /Users/cfederspiel/Documents/projects/stepwise-k8s/multipass worker7:/usr/share/host/
+kubectl exec -it airflow-dag-processor-7b56bc9fd6-hg249  -n airflow -c dag-processor -- ls /opt/airflow/dags
+
+kubectl delete pod airflow-dag-processor-7b56bc9fd6-hg249  -n airflow
+
+kubectl get pods -n airflow
+kubectl exec -it  airflow-dag-processor-7b56bc9fd6-cxkjn -n airflow -c dag-processor -- ls /opt/airflow/dags

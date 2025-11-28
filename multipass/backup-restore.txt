@@ -1,0 +1,40 @@
+etcdctl snapshot save kubernetes.db
+.. realize you need to restore
+systemctl stop kube-apiserver
+
+--etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+
+multipass exec master -- ls -l /etc/kubernetes/pki/
+multipass transfer master:/etc/kubernetes/pki/etcd/ca.crt cluster-data/etcd-certs/
+multipass transfer master:/etc/kubernetes/pki/apiserver-etcd-client.crt cluster-data/etcd-certs/
+multipass transfer master:/etc/kubernetes/pki/apiserver-etcd-client.key cluster-data/etcd-certs/
+or
+multipass shell master
+sudo cp /etc/kubernetes/pki/etcd/ca.crt /usr/share/host/cluster-data/etcd-certs/
+sudo cp /etc/kubernetes/pki/apiserver-etcd-client.crt /usr/share/host/cluster-data/etcd-certs/
+sudo cp /etc/kubernetes/pki/apiserver-etcd-client.key /usr/share/host/cluster-data/etcd-certs/
+exit
+mkdir -p cluster-data/backup
+kubectl port-forward pod/etcd-master -n kube-system 2379:2379
+etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=cluster-data/etcd-certs/ca.crt \
+  --cert=cluster-data/etcd-certs/apiserver-etcd-client.crt \
+  --key=cluster-data/etcd-certs/apiserver-etcd-client.key \
+  snapshot save cluster-data/backup/etcd-snapshot.db
+
+etcdctl snapshot restore kubernetes.db --data-dir /var/lib/etc-date
+
+update service unit to use new dir
+etcd.service 
+ExecStart
+...
+--data-dir=/var/lib/etc-date
+
+systemctl daemon-reload
+
+systemctl restart etcd
+
+systemctl start kube-apiserver
