@@ -17,7 +17,7 @@ multipass shell master
 export KUBERNETES_VERSION=1.34
 sudo -Eu root /bin/bash
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring-$KUBERNETES_VERSION.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBERNETES_VERSION}/deb/ /" >> /etc/apt/sources.list.d/kubernetes.list
 apt-get update
 apt-cache madison kubeadm
 export KUBERNETES_BUILD=${KUBERNETES_VERSION}.1
@@ -26,6 +26,8 @@ apt-mark unhold kubeadm kubelet
 apt-get install -y kubeadm=${KUBELET_VERSION}
 apt-get install -y kubelet=${KUBELET_VERSION}
 apt-mark hold kubeadm kubelet
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
 exit
 sudo kubeadm upgrade plan 
 echo v${KUBERNETES_BUILD}
@@ -87,3 +89,4 @@ kubectl get nodes
 apt list --installed cri-tools
 apt list --upgradable
 apt show -a cri-tools
+apt policy cri-tools

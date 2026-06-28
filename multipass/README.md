@@ -1,6 +1,7 @@
 Cluster Design:
 Multipass Ubuntu VMs
 kubeadm defaults
+/etc/hosts cluster DNS, manually? scripted? sync'ed
 Calico Networking
 
 Target configuration
@@ -22,6 +23,7 @@ We could simply use iproute to route pod traffic, but then all that traffic orig
 Host Prep:
 ./download-keys.sh 1.32
 brew install etcd
+mkdir -p cluster-data/etcd-certs
 
 Enable Full Disk Access to multipassd within Mac Settings -> Privacy & Security
 multipass launch --name reference  --bridged  --mount ~/Documents/projects/stepwise-k8s/multipass/:/usr/share/host
@@ -59,15 +61,28 @@ use yaml tool to create netplan static ip
 #############
 
 # cni gives a path for coredns service. A bridge only works if your router allows hairpin traffic
-multipass exec master -- sudo mkdir -p /etc/cni/net.d
-multipass exec master -- ls /etc/cni/net.d
-multipass exec master -- ifconfig
+# we need etcd utils so we can backup etcd
+multipass exec master -- sudo /usr/share/host/vm-prep/other.sh
+# multipass exec master -- sudo mkdir -p /etc/cni/net.d
+# multipass exec master -- ls /etc/cni/net.d
+# multipass exec master -- ifconfig
 # multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-flannel-overlay.conflist /etc/cni/net.d/10-flannel-overlay.conflist
 # crio will give you the bridge conflist to use, we just have to enable it
 # But we know we are simply bootstrapping to Calico, so instead of the wide-range default bridge, we give a CRIO bridge with a specific, limited IP range that we know wont conflict with the Calico range.
-multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist
-multipass exec master -- ifconfig
-multipass exec master -- sudo /usr/share/host/guest/master/start-master.sh
+
+# DO NOT install a bridge, certainly not this one
+# multipass exec master -- sudo cp /usr/share/host/guest/cni/master-10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist
+multipass exec master -- cat /etc/hosts
+multipass exec master -- sudo bash -s <<'EOF'
+IP=$(ip addr show enp0s1 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+echo "$IP master.k8s-cluster.local" >> /etc/hosts
+EOF
+MASTER_HOST_IP=$(multipass exec master -- ip addr show enp0s1 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+sudo sed -i "/://master.k8s-cluster.local\$MASTER_HOST_IP$ master.k8s-cluster.local" /etc/hosts || echo "$MASTER_HOST_IP master.k8s-cluster.local" | sudo tee -a /etc/hosts
+
+multipass exec master -- sudo /usr/share/host/guest/master/create-cluster-config.sh master.k8s-cluster.local /etc/k8s-config/init-cluster-config.yaml
+multipass exec master -- cat /etc/k8s-config/init-cluster-config.yaml
+multipass exec master -- sudo /usr/bin/kubeadm init --config /etc/k8s-config/cluster-config.yaml
 multipass exec master -- sudo cp /etc/kubernetes/admin.conf /usr/share/host/guest/generated/
 
 # make kubectl usable on host
@@ -79,10 +94,10 @@ kubectl create secret docker-registry dockerhub \
 
 # multipass exec master -- sudo mkdir -p /var/lib/data/openebs-volumes
 kubectl get nodes
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.2/manifests/tigera-operator.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/tigera-operator.yaml
 kubectl create -k $HOME/Documents/projects/stepwise-k8s/multipass/guest/calico/
 kubectl get tigerastatus
-multipass exec master -- sudo mv /etc/cni/net.d/10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist.disabled
+# multipass exec master -- sudo mv /etc/cni/net.d/10-crio-ipv4-bridge.conflist /etc/cni/net.d/10-crio-ipv4-bridge.conflist.disabled
 
 # create-join-config needs to use kubectl
 multipass exec master -- /usr/share/host/guest/master/install-config.sh
