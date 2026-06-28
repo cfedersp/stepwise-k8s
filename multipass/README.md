@@ -78,7 +78,7 @@ IP=$(ip addr show enp0s1 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
 echo "$IP master.k8s-cluster.local" >> /etc/hosts
 EOF
 MASTER_HOST_IP=$(multipass exec master -- ip addr show enp0s1 | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
-sudo sed -i "/://master.k8s-cluster.local\$MASTER_HOST_IP$ master.k8s-cluster.local" /etc/hosts || echo "$MASTER_HOST_IP master.k8s-cluster.local" | sudo tee -a /etc/hosts
+sudo sed -i ''  -E "s/^([0-9]{1,3}\.){3}[0-9]{1,3}([[:space:]]+master.k8s-cluster.local)/${MASTER_HOST_IP}\\2/w /dev/stdout" /etc/hosts | grep -q . || echo "$MASTER_HOST_IP master.k8s-cluster.local" | sudo tee -a /etc/hosts
 
 multipass exec master -- sudo /usr/share/host/guest/master/create-cluster-config.sh master.k8s-cluster.local /etc/k8s-config/init-cluster-config.yaml
 multipass exec master -- cat /etc/k8s-config/init-cluster-config.yaml
